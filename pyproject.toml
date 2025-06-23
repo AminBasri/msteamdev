@@ -1,0 +1,30 @@
+[project]
+name = "msteamuat"
+version = "0.1.0"
+description = "msteam using crewAI"
+authors = [{ name = "Amin Basri", email = "noramin@infopro.com.my" }]
+requires-python = ">=3.10,<3.14"
+dependencies = [
+    "crewai[tools]>=0.126.0,<1.0.0",
+    "fastapi",
+    "uvicorn",
+    "langchain",
+    "langchain-community",
+    "python-dotenv",
+    "pydantic",
+    "apscheduler"
+]
+
+[project.scripts]
+msteam = "msteamuat.main:run"
+run_crew = "msteamuat.main:run"
+train = "msteamuat.main:train"
+replay = "msteamuat.main:replay"
+test = "msteamuat.main:test"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.crewai]
+type = "crew"
