@@ -14,28 +14,33 @@ from msteamuat.tools.custom_tool import ShiftReportOutput
 from pydantic import BaseModel
 import pytz
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('/home/crewai/msteamuat/report.log'),
-        logging.StreamHandler()
-    ]
-)
+# Create a named logger for this module
+logger = logging.getLogger('report')
+logger.setLevel(logging.INFO)
+
+# Avoid propagating logs to the root logger
+logger.propagate = False
+
+# Clear any existing handlers to avoid conflicts
+logger.handlers.clear()
+
+# Add FileHandler for report.log
+file_handler = logging.FileHandler('/home/crewai/msteamuat/report.log')
+file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+logger.addHandler(file_handler)
+
+# Add StreamHandler for console output
+stream_handler = logging.StreamHandler()
+stream_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+logger.addHandler(stream_handler)
 
 LOG_PATH = "src/msteamuat/alert_log.json"
-LOCAL_TZ = pytz.timezone('Asia/Singapore')  # +08 time zone
-
-'''# Pydantic model for structured output
-class ShiftReport(BaseModel):
-    subject: str
-    body: str'''
+LOCAL_TZ = pytz.timezone('Asia/Singapore')
 
 def load_alerts(start_time: datetime, end_time: datetime):
     """Load alerts from the log within the specified time window, deduplicating by incident_number."""
     if not os.path.exists(LOG_PATH):
-        logging.warning(f"Alert log not found at {LOG_PATH}")
+        logger.warning(f"Alert log not found at {LOG_PATH}")
         return []
     try:
         # Dictionary to store the latest alert for each incident_number
@@ -50,7 +55,7 @@ def load_alerts(start_time: datetime, end_time: datetime):
                         alert_dict[incident_number] = alert
         return list(alert_dict.values())
     except Exception as e:
-        logging.error(f"Failed to load alerts: {e}")
+        logger.error(f"Failed to load alerts: {e}")
         return []
 
 def send_report_email(subject: str, body: str):
@@ -64,7 +69,7 @@ def send_report_email(subject: str, body: str):
     sender_email = os.getenv("SENDER_EMAIL", smtp_username)
 
     if not all([smtp_host, smtp_port, smtp_username, smtp_password, recipients]):
-        logging.error("Missing SMTP configuration or recipients")
+        logger.error("Missing SMTP configuration or recipients")
         raise ValueError("Incomplete SMTP configuration")
 
     msg = MIMEMultipart()
@@ -78,26 +83,22 @@ def send_report_email(subject: str, body: str):
             server.starttls()
             server.login(smtp_username, smtp_password)
             server.sendmail(sender_email, recipients, msg.as_string())
-            logging.info(f"Shift report emailed to {', '.join(recipients)}")
+            logger.info(f"Shift report emailed to {', '.join(recipients)}")
     except smtplib.SMTPAuthenticationError:
-        logging.error("SMTP authentication failed")
+        logger.error("SMTP authentication failed")
         raise
     except smtplib.SMTPRecipientsRefused as e:
-        logging.error(f"SMTP recipients refused: {e}")
+        logger.error(f"SMTP recipients refused: {e}")
         raise
     except smtplib.SMTPException as e:
-        logging.error(f"SMTP error: {e}")
+        logger.error(f"SMTP error: {e}")
         raise
     except Exception as e:
-        logging.error(f"Failed to send shift report email: {e}")
+        logger.error(f"Failed to send shift report email: {e}")
         raise
 
 def run(shift_type=None):
-    """Run the shift report task to summarize and email alert activity.
-    
-    Args:
-        shift_type (str): Either "morning" (07:00-16:00) or "evening" (16:00-22:00)
-    """
+    """Run the shift report task to summarize and email alert activity."""
     now = datetime.now(LOCAL_TZ)
     if shift_type is None:
         if 7 <= now.hour < 16:
@@ -106,7 +107,7 @@ def run(shift_type=None):
             shift_type = "evening"
         else:
             shift_type = "morning"  # Default/fallback
-    logging.info(f"Starting {shift_type} shift report generation")
+    logger.info(f"Starting {shift_type} shift report generation")
 
     if shift_type == "morning":
         shift_start = now.replace(hour=7, minute=0, second=0, microsecond=0)
@@ -131,7 +132,7 @@ def run(shift_type=None):
     
     reporter_agent = agents.get("reporter")
     if not reporter_agent:
-        logging.error("Missing reporter agent")
+        logger.error("Missing reporter agent")
         return
 
     # Prepare alert data for the agent
@@ -217,12 +218,12 @@ def run(shift_type=None):
     )
 
     try:
-        logging.info("Kicking off AI crew for shift report")
+        logger.info("Kicking off AI crew for shift report")
         result = crew.kickoff()
         
         # Debug logging
-        logging.info(f"Crew result type: {type(result)}")
-        logging.info(f"Crew result attributes: {[attr for attr in dir(result) if not attr.startswith('_')]}")
+        logger.info(f"Crew result type: {type(result)}")
+        logger.info(f"Crew result attributes: {[attr for attr in dir(result) if not attr.startswith('_')]}")
         
         # Extract the structured output using Pydantic
         try:
@@ -231,26 +232,26 @@ def run(shift_type=None):
             
             # Try to get Pydantic output first (preferred)
             if hasattr(result, 'pydantic') and result.pydantic:
-                logging.info("Using Pydantic structured output")
+                logger.info("Using Pydantic structured output")
                 report_data = result.pydantic
                 subject = report_data.subject
                 body = report_data.body
-                logging.info(f"Pydantic output - Subject: {subject[:50]}...")
-                logging.info(f"Pydantic output - Body length: {len(body)}")
+                logger.info(f"Pydantic output - Subject: {subject[:50]}...")
+                logger.info(f"Pydantic output - Body length: {len(body)}")
                 
             # Fallback to JSON dict output
             elif hasattr(result, 'json_dict') and result.json_dict:
-                logging.info("Using JSON dict output")
+                logger.info("Using JSON dict output")
                 subject = result.json_dict.get("subject")
                 body = result.json_dict.get("body")
-                logging.info(f"JSON dict output - Subject: {subject[:50] if subject else 'None'}...")
-                logging.info(f"JSON dict output - Body length: {len(body) if body else 0}")
+                logger.info(f"JSON dict output - Subject: {subject[:50] if subject else 'None'}...")
+                logger.info(f"JSON dict output - Body length: {len(body) if body else 0}")
                 
             # Last resort: try to parse raw output
             elif hasattr(result, 'raw') and result.raw:
-                logging.info("Attempting to parse raw output")
+                logger.info("Attempting to parse raw output")
                 raw_output = result.raw.strip()
-                logging.info(f"Raw output preview: {raw_output[:200]}...")
+                logger.info(f"Raw output preview: {raw_output[:200]}...")
                 
                 # Try to find JSON in the raw output
                 import re
@@ -261,16 +262,16 @@ def run(shift_type=None):
                         parsed_data = json.loads(json_string)
                         subject = parsed_data.get("subject")
                         body = parsed_data.get("body")
-                        logging.info("Successfully parsed JSON from raw output")
+                        logger.info("Successfully parsed JSON from raw output")
                     except json.JSONDecodeError as e:
-                        logging.error(f"Failed to parse JSON from raw output: {e}")
+                        logger.error(f"Failed to parse JSON from raw output: {e}")
                         
             # Validate that we have both subject and body
             if not subject or not body:
                 raise ValueError(f"Missing required fields - Subject: {'✓' if subject else '✗'}, Body: {'✓' if body else '✗'}")
                 
         except Exception as e:
-            logging.error(f"Failed to extract structured output: {e}")
+            logger.error(f"Failed to extract structured output: {e}")
             
             # Fallback: Generate a basic report
             subject = f"📊 NOC {shift_type.capitalize()} Shift Report ({shift_start_local} - {shift_end_local} +08)"
@@ -306,18 +307,18 @@ def run(shift_type=None):
                 f"CrewAI Shift Reporting System"
             )
             
-            logging.warning("Using fallback report due to structured output extraction failure")
+            logger.warning("Using fallback report due to structured output extraction failure")
 
         # Send the email
         send_report_email(subject, body)
-        logging.info("Shift report emailed to NOC team successfully")
+        logger.info("Shift report emailed to NOC team successfully")
         
         # Log success details
-        logging.info(f"Report sent - Subject: {subject}")
-        logging.info(f"Report sent - Body length: {len(body)} characters")
+        logger.info(f"Report sent - Subject: {subject}")
+        logger.info(f"Report sent - Body length: {len(body)} characters")
         
     except Exception as e:
-        logging.error(f"Report generation or email failed: {e}")
+        logger.error(f"Report generation or email failed: {e}")
         raise
 
 if __name__ == "__main__":

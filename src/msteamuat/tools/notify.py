@@ -10,27 +10,32 @@ from typing import Dict, Tuple
 import pytz
 from datetime import datetime
 from crewai import Agent, Task, Crew
-from pydantic import BaseModel, Field
 from msteamuat.crew import load_agents, load_yaml
 from msteamuat.tools.custom_tool import RecommendedActions, EmailContent
 from functools import wraps
 import time
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('/home/crewai/msteamuat/notify.log'),
-        logging.StreamHandler()
-    ]
-)
+# Create a named logger for this module
+logger = logging.getLogger('notify')
+logger.setLevel(logging.INFO)
+
+# Avoid propagating logs to the root logger
+logger.propagate = False
+
+# Clear any existing handlers to avoid conflicts
+logger.handlers.clear()
+
+# Add FileHandler for notify.log
+file_handler = logging.FileHandler('/home/crewai/msteamuat/notify.log')
+file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+logger.addHandler(file_handler)
+
+# Add StreamHandler for console output
+stream_handler = logging.StreamHandler()
+stream_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+logger.addHandler(stream_handler)
 
 LOCAL_TZ = pytz.timezone('Asia/Singapore')
-
-'''class EmailContent(BaseModel):
-    subject: str
-    body: str'''
 
 def retry(max_attempts=3, delay=2):
     """Retry decorator for CrewAI tasks."""
@@ -44,7 +49,7 @@ def retry(max_attempts=3, delay=2):
                     if attempt == max_attempts - 1:
                         raise
                     time.sleep(delay * (2 ** attempt))
-                    logging.warning(f"Retry {attempt + 1}/{max_attempts} for {func.__name__}: {e}")
+                    logger.warning(f"Retry {attempt + 1}/{max_attempts} for {func.__name__}: {e}")
         return wrapper
     return decorator
 
@@ -86,7 +91,7 @@ def generate_recommended_actions(alert: Dict) -> RecommendedActions:
         tasks_def = load_yaml("src/msteamuat/config/tasks.yaml")
         action_recommender = agents.get("action_recommender")
         if not action_recommender:
-            logging.error("Missing action_recommender agent")
+            logger.error("Missing action_recommender agent")
             return RecommendedActions(actions=[
                 f"Investigate {alert.get('metric', 'system')} usage",
                 "Check running processes and services",
@@ -108,7 +113,7 @@ def generate_recommended_actions(alert: Dict) -> RecommendedActions:
         result = crew.kickoff()
         return result.tasks_output[0].pydantic
     except Exception as e:
-        logging.error(f"Failed to generate recommended actions: {e}")
+        logger.error(f"Failed to generate recommended actions: {e}")
         return RecommendedActions(actions=[
             f"Investigate {alert.get('metric', 'system')} usage",
             "Check running processes and services",
@@ -127,7 +132,7 @@ def generate_email_content(alert: Dict, reason: str) -> Tuple[str, str]:
         tasks_def = load_yaml("src/msteamuat/config/tasks.yaml")
         communicator_agent = agents.get("communicator")
         if not communicator_agent:
-            logging.error("Missing communicator agent")
+            logger.error("Missing communicator agent")
             return format_alert_email(alert, reason, actions_text)
 
         task = Task(
@@ -141,7 +146,7 @@ def generate_email_content(alert: Dict, reason: str) -> Tuple[str, str]:
             ),
             expected_output=tasks_def["notify_bau"]["expected_output"],
             agent=communicator_agent,
-            output_pydantic=EmailContent  # Use structured output
+            output_pydantic=EmailContent
         )
         crew = Crew(agents=[communicator_agent], tasks=[task], verbose=True)
         result = crew.kickoff()
@@ -151,11 +156,11 @@ def generate_email_content(alert: Dict, reason: str) -> Tuple[str, str]:
             email_content = result.pydantic
             return email_content.subject, email_content.body
         else:
-            logging.warning("No structured output available, falling back to raw parsing")
+            logger.warning("No structured output available, falling back to raw parsing")
             return format_alert_email(alert, reason, actions_text)
             
     except Exception as e:
-        logging.error(f"Failed to generate email content: {e}")
+        logger.error(f"Failed to generate email content: {e}")
         return format_alert_email(alert, reason, actions_text)
 
 def format_alert_email(alert: Dict, reason: str, recommended_actions: str) -> tuple[str, str]:
@@ -178,11 +183,11 @@ def format_alert_email(alert: Dict, reason: str, recommended_actions: str) -> tu
 
 def send_notification(alert: Dict, reason: str) -> str:
     """Send email notification for alert escalation."""
-    logging.info(f"Starting email notification for incident #{alert.get('incident_number', 'N/A')}")
+    logger.info(f"Starting email notification for incident #{alert.get('incident_number', 'N/A')}")
     try:
         is_valid, config_message = validate_smtp_config()
         if not is_valid:
-            logging.error(f"SMTP configuration validation failed: {config_message}")
+            logger.error(f"SMTP configuration validation failed: {config_message}")
             raise ValueError(f"SMTP configuration error: {config_message}")
 
         smtp_host = os.getenv("SMTP_HOST")
@@ -194,8 +199,8 @@ def send_notification(alert: Dict, reason: str) -> str:
         sender_name = os.getenv("SENDER_NAME", "CrewAI Escalation Alert System")
         sender_email = os.getenv("SENDER_EMAIL", smtp_user)
 
-        logging.info(f"SMTP Config - Host: {smtp_host}, Port: {smtp_port}, User: {smtp_user}")
-        logging.info(f"Recipients: {len(recipients)} addresses")
+        logger.info(f"SMTP Config - Host: {smtp_host}, Port: {smtp_port}, User: {smtp_user}")
+        logger.info(f"Recipients: {len(recipients)} addresses")
 
         subject, body = generate_email_content(alert, reason)
         msg = MIMEMultipart()
@@ -210,19 +215,19 @@ def send_notification(alert: Dict, reason: str) -> str:
                 server.login(smtp_user, smtp_pass)
                 server.sendmail(smtp_user, recipients, msg.as_string())
                 success_message = f"Email notification sent successfully to {len(recipients)} recipients"
-                logging.info(success_message)
+                logger.info(success_message)
                 return success_message
         except smtplib.SMTPAuthenticationError:
-            logging.error("SMTP authentication failed")
+            logger.error("SMTP authentication failed")
             raise
         except smtplib.SMTPException as se:
-            logging.error(f"SMTP error: {se}")
+            logger.error(f"SMTP error: {se}")
             raise
     except ValueError as ve:
-        logging.error(f"Configuration error: {ve}")
+        logger.error(f"Configuration error: {ve}")
         raise
     except Exception as e:
-        logging.error(f"Failed to send email notification: {e}")
+        logger.error(f"Failed to send email notification: {e}")
         raise
 
 def test_smtp_connection() -> bool:
@@ -230,7 +235,7 @@ def test_smtp_connection() -> bool:
     try:
         is_valid, config_message = validate_smtp_config()
         if not is_valid:
-            logging.error(f"Invalid configuration: {config_message}")
+            logger.error(f"Invalid configuration: {config_message}")
             return False
 
         smtp_host = os.getenv("SMTP_HOST")
@@ -238,14 +243,14 @@ def test_smtp_connection() -> bool:
         smtp_user = os.getenv("SMTP_USERNAME")
         smtp_pass = os.getenv("SMTP_PASSWORD")
 
-        logging.info(f"Testing SMTP connection to {smtp_host}:{smtp_port}")
+        logger.info(f"Testing SMTP connection to {smtp_host}:{smtp_port}")
         with smtplib.SMTP(smtp_host, smtp_port) as server:
             server.starttls()
             server.login(smtp_user, smtp_pass)
-            logging.info("SMTP connection test successful")
+            logger.info("SMTP connection test successful")
             return True
     except Exception as e:
-        logging.error(f"SMTP connection test failed: {e}")
+        logger.error(f"SMTP connection test failed: {e}")
         return False
 
 if __name__ == "__main__":

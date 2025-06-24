@@ -13,15 +13,25 @@ from msteamuat.tools.alert_store import check_escalation_eligibility, _load_log
 
 load_dotenv()
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('/home/crewai/msteamuat/crew.log'),
-        logging.StreamHandler()
-    ]
-)
+# Create a named logger for this module
+logger = logging.getLogger('crew')
+logger.setLevel(logging.INFO)
+
+# Avoid propagating logs to the root logger
+logger.propagate = False
+
+# Clear any existing handlers to avoid conflicts
+logger.handlers.clear()
+
+# Add FileHandler for crew.log
+file_handler = logging.FileHandler('/home/crewai/msteamuat/crew.log')
+file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+logger.addHandler(file_handler)
+
+# Add StreamHandler for console output
+stream_handler = logging.StreamHandler()
+stream_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+logger.addHandler(stream_handler)
 
 def retry(max_attempts=3, delay=2):
     """Retry decorator for CrewAI tasks."""
@@ -35,7 +45,7 @@ def retry(max_attempts=3, delay=2):
                     if attempt == max_attempts - 1:
                         raise
                     time.sleep(delay * (2 ** attempt))
-                    logging.warning(f"Retry {attempt + 1}/{max_attempts} for {func.__name__}: {e}")
+                    logger.warning(f"Retry {attempt + 1}/{max_attempts} for {func.__name__}: {e}")
         return wrapper
     return decorator
 
@@ -83,10 +93,10 @@ def run_alert_pipeline(alert: dict):
     delay_minutes = int(os.getenv("ESCALATION_DELAY_MINUTES", "25"))
     delay = (occurred_at + timedelta(minutes=delay_minutes)) - now
     seconds = max(0, delay.total_seconds())
-    logging.info(f"⏱ Holding alert {int(seconds)} seconds before escalation decision")
+    logger.info(f"⏱ Holding alert {int(seconds)} seconds before escalation decision")
 
     if check_resolution_status(alert, delay_minutes):
-        logging.info(f"✅ Alert with incident #{alert.get('incident_number')} resolved within {delay_minutes} minutes")
+        logger.info(f"✅ Alert with incident #{alert.get('incident_number')} resolved within {delay_minutes} minutes")
         return f"Alert resolved within {delay_minutes} minutes, escalation canceled"
 
     Timer(seconds, run_escalation_pipeline, args=[alert]).start()
@@ -95,12 +105,12 @@ def run_alert_pipeline(alert: dict):
 @retry()
 def run_escalation_pipeline(alert: dict):
     """Run the escalation pipeline, deciding whether to escalate and notify."""
-    logging.info("⏰ Escalation pipeline triggered")
+    logger.info("⏰ Escalation pipeline triggered")
     from msteamuat.tools.notify import send_notification
 
     delay_minutes = int(os.getenv("ESCALATION_DELAY_MINUTES", "25"))
     if check_resolution_status(alert, delay_minutes):
-        logging.info(f"✅ Alert with incident #{alert.get('incident_number')} resolved before escalation")
+        logger.info(f"✅ Alert with incident #{alert.get('incident_number')} resolved before escalation")
         return f"Alert resolved, escalation canceled"
 
     agents = load_agents()
@@ -109,11 +119,11 @@ def run_escalation_pipeline(alert: dict):
     communicator_agent = agents.get("communicator")
 
     if not escalation_agent or not communicator_agent:
-        logging.error("Missing required agents")
+        logger.error("Missing required agents")
         return "Missing required agents"
 
     eligible, reason = check_escalation_eligibility(alert)
-    logging.info(f"🧪 Policy check: {eligible}, Reason: {reason}")
+    logger.info(f"🧪 Policy check: {eligible}, Reason: {reason}")
 
     context = (
         f"Alert Title: {alert['title']}\n"
@@ -145,36 +155,36 @@ def run_escalation_pipeline(alert: dict):
     )
 
     try:
-        logging.info("🧠 Kicking off AI crew for escalation and notification")
+        logger.info("🧠 Kicking off AI crew for escalation and notification")
         result = crew.kickoff()
         comm_response = str(result.raw or "")
-        logging.info(f"🤖 Crew execution completed with result:\n{comm_response}")
+        logger.info(f"🤖 Crew execution completed with result:\n{comm_response}")
 
         escalation_keywords = ["yes", "escalate", "send", "notify", "proceed", "approved", "urgent", "critical"]
         found_keywords = [kw for kw in escalation_keywords if kw in comm_response.lower()]
-        logging.info(f"🔍 Keywords found: {found_keywords}")
+        logger.info(f"🔍 Keywords found: {found_keywords}")
 
         should_send_email = len(found_keywords) > 0
 
         if should_send_email or eligible:
             try:
                 send_notification(alert, reason)
-                logging.info("✅ Email sent to BAU successfully")
+                logger.info("✅ Email sent to BAU successfully")
             except Exception as email_error:
-                logging.error(f"❌ Failed to send email: {email_error}")
+                logger.error(f"❌ Failed to send email: {email_error}")
                 raise
         else:
-            logging.info("ℹ️ Escalation not approved by AI and policy check failed")
+            logger.info("ℹ️ Escalation not approved by AI and policy check failed")
             return "Escalation not approved, no email sent"
 
     except Exception as e:
-        logging.error(f"💥 Crew execution failed: {e}")
+        logger.error(f"💥 Crew execution failed: {e}")
         if eligible:
-            logging.info("⚠️ Crew failed but policy indicates escalation needed")
+            logger.info("⚠️ Crew failed but policy indicates escalation needed")
             try:
                 send_notification(alert, f"Crew execution failed but policy indicates escalation: {reason}")
-                logging.info("✅ Fallback email sent successfully")
+                logger.info("✅ Fallback email sent successfully")
             except Exception as fallback_error:
-                logging.error(f"❌ Fallback email failed: {fallback_error}")
+                logger.error(f"❌ Fallback email failed: {fallback_error}")
                 raise
         raise
