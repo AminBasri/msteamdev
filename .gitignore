@@ -1,3 +1,8 @@
 .env
 __pycache__/
 .DS_Store
+*.log
+*.json
+*.pyc
+*.copy.py
+uv.lock
