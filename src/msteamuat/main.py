@@ -4,7 +4,7 @@ import warnings
 
 from datetime import datetime
 
-from msteam.crew import Msteam
+from msteamuat.crew import msteamuat
 
 warnings.filterwarnings("ignore", category=SyntaxWarning, module="pysbd")
 
