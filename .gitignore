@@ -4,5 +4,5 @@ __pycache__/
 *.log
 *.json
 *.pyc
-*.copy.py
+*copy.py
 uv.lock
