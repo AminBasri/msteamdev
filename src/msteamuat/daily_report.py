@@ -103,7 +103,7 @@ def run(shift_type=None):
     if shift_type is None:
         if 7 <= now.hour < 16:
             shift_type = "morning"
-        elif 16 <= now.hour < 22:
+        elif 13 <= now.hour < 22:
             shift_type = "evening"
         else:
             shift_type = "morning"  # Default/fallback
@@ -113,7 +113,7 @@ def run(shift_type=None):
         shift_start = now.replace(hour=7, minute=0, second=0, microsecond=0)
         shift_end = now.replace(hour=16, minute=0, second=0, microsecond=0)
     else:  # evening shift
-        shift_start = now.replace(hour=16, minute=0, second=0, microsecond=0)
+        shift_start = now.replace(hour=13, minute=0, second=0, microsecond=0)
         shift_end = now.replace(hour=22, minute=0, second=0, microsecond=0)
 
     # If current time is before shift_start, use previous day's window
