@@ -55,7 +55,7 @@ def load_yaml(path):
 
 def load_agents():
     agent_def = load_yaml("src/msteamuat/config/agents.yaml")
-    llm = get_alert_llm()
+    llm = get_llm()
     return {
         name: Agent(
             role=cfg["role"],
