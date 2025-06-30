@@ -8,7 +8,7 @@ import time
 import logging
 
 from crewai import Agent, Task, Crew
-from msteamuat.llm import get_alert_llm, get_report_llm
+from msteamuat.llm import get_llm
 from msteamuat.tools.alert_store import check_escalation_eligibility, _load_log
 
 load_dotenv()
@@ -55,15 +55,14 @@ def load_yaml(path):
 
 def load_agents():
     agent_def = load_yaml("src/msteamuat/config/agents.yaml")
-    alert_llm = get_alert_llm()  # Magistral for alert-related agents
-    report_llm = get_report_llm()  # Mixtral for reporting agent
+    llm = get_alert_llm()
     return {
         name: Agent(
             role=cfg["role"],
             goal=cfg["goal"],
             backstory=cfg["backstory"],
             verbose=True,
-            llm=report_llm if name == "reporter" else alert_llm,  # Use Mixtral for reporter, Magistral for others
+            llm=llm,
         )
         for name, cfg in agent_def.items()
     }
