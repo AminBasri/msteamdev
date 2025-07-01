@@ -2,6 +2,7 @@ import os
 import json
 import logging
 import smtplib
+import requests
 from datetime import datetime, timedelta, timezone
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -13,6 +14,7 @@ from msteamuat.tools.alert_store import check_escalation_eligibility
 from msteamuat.tools.custom_tool import ShiftReportOutput
 from pydantic import BaseModel
 import pytz
+import re
 
 # Create a named logger for this module
 logger = logging.getLogger('report')
@@ -37,6 +39,53 @@ logger.addHandler(stream_handler)
 LOG_PATH = "src/msteamuat/alert_log.json"
 LOCAL_TZ = pytz.timezone('Asia/Singapore')
 
+def validate_rocketchat_webhook() -> tuple[bool, str]:
+    """Validate Rocket.Chat webhook configuration."""
+    webhook_url = os.getenv("ROCKETCHAT_WEBHOOK_URL")
+    webhook_token = os.getenv("ROCKETCHAT_WEBHOOK_TOKEN")
+
+    if not webhook_url or not webhook_token:
+        return False, "Missing ROCKETCHAT_WEBHOOK_URL or ROCKETCHAT_WEBHOOK_TOKEN environment variables"
+    return True, "Rocket.Chat webhook configuration is valid"
+
+def send_rocketchat_webhook_message(message: str) -> bool:
+    """Send a message to Rocket.Chat using the webhook."""
+    is_valid, config_message = validate_rocketchat_webhook()
+    if not is_valid:
+        logger.error(f"Rocket.Chat webhook validation failed: {config_message}")
+        return False
+
+    webhook_url = os.getenv("ROCKETCHAT_WEBHOOK_URL")
+    webhook_token = os.getenv("ROCKETCHAT_WEBHOOK_TOKEN")
+
+    payload = {
+        "alias": "CrewAI Shift Reporting System",
+        "text": message
+    }
+
+    headers = {
+        "Content-Type": "application/json"
+    }
+
+    try:
+        response = requests.post(webhook_url, json=payload, headers=headers, timeout=10)
+        if response.status_code == 200:
+            logger.info("Rocket.Chat webhook message sent successfully")
+            return True
+        else:
+            logger.error(f"Rocket.Chat webhook failed: HTTP {response.status_code}, Response: {response.text}")
+            return False
+    except Exception as e:
+        logger.error(f"Failed to send Rocket.Chat webhook message: {e}")
+        return False
+
+def format_rocketchat_webhook_report(subject: str, body: str) -> str:
+    """Format shift report for Rocket.Chat webhook."""
+    # Remove email-specific greeting and signoff, adapt for Rocket.Chat
+    body_lines = body.split("\n")
+    filtered_body = [line for line in body_lines if not line.startswith("Dear NOC Team") and not line.startswith("Best regards") and not line.startswith("CrewAI") and not line.startswith("Managed Service Team")]
+    return f"**{subject}**\n\n" + "\n".join(filtered_body)
+
 def load_alerts(start_time: datetime, end_time: datetime):
     """Load alerts from the log within the specified time window, deduplicating by incident_number."""
     if not os.path.exists(LOG_PATH):
@@ -59,7 +108,7 @@ def load_alerts(start_time: datetime, end_time: datetime):
         return []
 
 def send_report_email(subject: str, body: str):
-    """Send the shift report email to the NOC team."""
+    """Send the shift report email and Rocket.Chat webhook message to the NOC team."""
     smtp_host = os.getenv("SMTP_HOST")
     smtp_port = int(os.getenv("SMTP_PORT", 587))
     smtp_username = os.getenv("SMTP_USERNAME")
@@ -96,6 +145,13 @@ def send_report_email(subject: str, body: str):
     except Exception as e:
         logger.error(f"Failed to send shift report email: {e}")
         raise
+
+    # Send to Rocket.Chat webhook
+    rocketchat_message = format_rocketchat_webhook_report(subject, body)
+    if send_rocketchat_webhook_message(rocketchat_message):
+        logger.info("Shift report sent to Rocket.Chat webhook successfully")
+    else:
+        logger.warning("Failed to send shift report to Rocket.Chat webhook, but email was sent")
 
 def run(shift_type=None):
     """Run the shift report task to summarize and email alert activity."""
@@ -200,7 +256,7 @@ def run(shift_type=None):
             f"5. Keep the tone professional and informative\n"
             f"6. Signoff should be formatted as follows:\n"
             f"    Best regards\n"
-            f"    CrewAI Reporting System\n"
+            f"    CrewAI Shift Reporting System\n"
             f"    Managed Service Team\n"
         ),
         expected_output=(
@@ -309,16 +365,16 @@ def run(shift_type=None):
             
             logger.warning("Using fallback report due to structured output extraction failure")
 
-        # Send the email
+        # Send the email and Rocket.Chat webhook message
         send_report_email(subject, body)
-        logger.info("Shift report emailed to NOC team successfully")
+        logger.info("Shift report emailed to NOC team and sent to Rocket.Chat webhook successfully")
         
         # Log success details
         logger.info(f"Report sent - Subject: {subject}")
         logger.info(f"Report sent - Body length: {len(body)} characters")
         
     except Exception as e:
-        logger.error(f"Report generation or email failed: {e}")
+        logger.error(f"Report generation or notification failed: {e}")
         raise
 
 if __name__ == "__main__":

@@ -13,7 +13,7 @@ dependencies = [
     "langchain_ollama",
     "python-dotenv",
     "pydantic",
-    "apscheduler"
+    "requests"
 ]
 
 [project.scripts]
