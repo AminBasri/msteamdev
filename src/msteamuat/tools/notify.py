@@ -9,7 +9,7 @@ from email.header import Header
 from email.utils import formataddr
 from typing import Dict, Tuple
 import pytz
-from datetime import datetime
+from datetime import datetime, timezone
 from crewai import Agent, Task, Crew
 from msteamuat.crew import load_agents, load_yaml
 from msteamuat.tools.custom_tool import RecommendedActions, EmailContent
