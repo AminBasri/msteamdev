@@ -113,7 +113,7 @@ def send_report_email(subject: str, body: str):
     smtp_port = int(os.getenv("SMTP_PORT", 587))
     smtp_username = os.getenv("SMTP_USERNAME")
     smtp_password = os.getenv("SMTP_PASSWORD")
-    recipients = [email.strip() for email in os.getenv("ALERT_EMAIL_RECIPIENTS", "").split(",") if email.strip()]
+    recipients = [email.strip() for email in os.getenv("REPORT_EMAIL", "").split(",") if email.strip()]
     sender_name = os.getenv("SENDER_NAME", "CrewAI Reporting System")
     sender_email = os.getenv("SENDER_EMAIL", smtp_username)
 
