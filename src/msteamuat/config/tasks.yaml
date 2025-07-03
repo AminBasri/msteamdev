@@ -107,6 +107,7 @@ shift_report:
       Managed Service Team
     
     Ensure special characters (e.g., backslashes, newlines) are properly escaped and handled.
+    Ensure the alert details are formatted as a list with each alert on a new line, and make sure all fields are properly filled in.
     Output a structured response with subject, body, and html_body fields matching this format.
   expected_output: >
     A structured object containing the email subject, body, and html_body, formatted as:
