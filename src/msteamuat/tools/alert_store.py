@@ -1,10 +1,8 @@
-# src/msteamuat/tools/alert_store.py
-
 import os
 import json
 from datetime import datetime, timedelta, timezone
 
-LOG_FILE = "src/msteamuat/alert_log.json"
+LOG_FILE = "src/msteam/alert_log.json"
 
 def _load_log():
     """Load alert log from file, returning an empty list if file doesn't exist."""
@@ -16,8 +14,6 @@ def _load_log():
 def _save_log(data):
     """Save alert to log, avoiding duplicates based on incident_number, title, status, and timestamp."""
     alerts = _load_log()
-    # Create a unique key to check for exact duplicates
-    unique_key = f"{data['incident_number']}_{data['title']}_{data['status']}_{data['timestamp']}"
     if not any(
         a.get('incident_number') == data['incident_number'] and
         a.get('title') == data['title'] and
@@ -28,47 +24,56 @@ def _save_log(data):
         with open(LOG_FILE, "a") as f:
             f.write(json.dumps(data) + "\n")
 
-def _last_alert(alerts, title, severity, current_timestamp):
-    """Find the most recent previous alert matching title and severity."""
-    current_time = datetime.fromisoformat(current_timestamp.replace("Z", "+00:00"))
-    matching_alerts = []
-    for alert in alerts:
-        if (alert["title"] == title and 
-            alert["severity"] == severity and 
-            alert["status"] == "triggered"):
-            alert_time = datetime.fromisoformat(alert["timestamp"].replace("Z", "+00:00"))
-            if alert_time < current_time:
-                matching_alerts.append((alert, alert_time))
-    
-    if not matching_alerts:
-        return None
-    
-    return max(matching_alerts, key=lambda x: x[1])[0]
-
 def check_escalation_eligibility(current_alert):
-    """Check if an alert is eligible for escalation based on suppression rules."""
+    """Determine if the alert should be escalated or suppressed, with full context history."""
     alerts = _load_log()
-    last = _last_alert(alerts, current_alert["title"], current_alert["severity"], current_alert["timestamp"])
-    
+
     # Save current alert after checking
     _save_log(current_alert)
-    
-    # Check if the most recent entry for this incident is resolved
-    recent_alerts = [a for a in alerts if a["incident_number"] == current_alert["incident_number"]]
-    if recent_alerts:
-        latest_alert = max(recent_alerts, key=lambda x: datetime.fromisoformat(x["timestamp"].replace("Z", "+00:00")))
-        if latest_alert["status"] == "resolved":
-            return False, f"Incident #{current_alert['incident_number']} already resolved at {latest_alert['timestamp']}"
-    
-    if not last:
-        return True, "First alert for this metric — allowed to escalate"
 
+    # Define current time and threshold
     current_time = datetime.fromisoformat(current_alert["timestamp"].replace("Z", "+00:00"))
-    last_time = datetime.fromisoformat(last["timestamp"].replace("Z", "+00:00"))
     threshold = 5 if current_alert["severity"] == "warning" else 3
-    days_diff = (current_time - last_time).days
-    
-    if days_diff >= threshold:
-        return True, f"Last seen {days_diff} days ago (threshold: {threshold})"
+
+    # Find previous 'triggered' alerts with same title and severity
+    matching_alerts = []
+    for alert in alerts:
+        if (alert["title"] == current_alert["title"] and
+            alert["severity"] == current_alert["severity"] and
+            alert["status"] == "triggered"):
+            past_time = datetime.fromisoformat(alert["timestamp"].replace("Z", "+00:00"))
+            days_diff = (current_time - past_time).days
+            if 0 <= days_diff < threshold:
+                matching_alerts.append((alert, days_diff))
+
+    # Format history context
+    matching_alerts.sort(key=lambda x: x[0]["timestamp"], reverse=True)
+    history_lines = [
+        f"    - Incident {a['incident_number']}: Triggered on {a['timestamp']} ({d} day(s) ago)"
+        for a, d in matching_alerts
+    ]
+    history_summary = "\n".join(history_lines) if history_lines else "    - No recent matching alerts found."
+
+    # Decision logic
+    if matching_alerts:
+        return False, (
+            f"🚫 Alert suppressed:\n"
+            f"- Title: {current_alert['title']}\n"
+            f"- Severity: {current_alert['severity']}\n"
+            f"- Incident: {current_alert['incident_number']}\n"
+            f"- Current Timestamp: {current_alert['timestamp']}\n"
+            f"- Suppression threshold: {threshold} days\n"
+            f"- Matching alert(s) seen within threshold:\n{history_summary}\n"
+            f"- Decision: Do NOT escalate."
+        )
     else:
-        return False, f"Suppressed: last seen {days_diff} days ago (threshold: {threshold})"
+        return True, (
+            f"🔺 Escalation allowed:\n"
+            f"- Title: {current_alert['title']}\n"
+            f"- Severity: {current_alert['severity']}\n"
+            f"- Incident: {current_alert['incident_number']}\n"
+            f"- Current Timestamp: {current_alert['timestamp']}\n"
+            f"- Suppression threshold: {threshold} days\n"
+            f"- No matching alerts found within threshold window.\n"
+            f"- Decision: Escalate."
+        )

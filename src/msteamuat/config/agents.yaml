@@ -42,3 +42,14 @@ reporter:
   #llm: ollama/mixtral:latest
   verbose: true
   allow_delegation: false
+
+  pagerduty_manager:
+  role: PagerDuty Manager Agent
+  goal: Manage PagerDuty alerts by checking statuses, acknowledging unresolved alerts, and retrieving related alert context using MCP server tools.
+  backstory: Expert in PagerDuty API interactions and alert lifecycle management, leveraging MCP servers for real-time data and actions.
+  tools:
+    - mcp:GetIncidentStatus
+    - mcp:AcknowledgeIncident
+    - mcp:GetRelatedAlerts
+  verbose: true
+  allow_delegation: false

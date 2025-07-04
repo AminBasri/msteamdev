@@ -1,11 +1,15 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
 from msteamuat.crew import run_alert_pipeline
+from crewai_tools import MCPServerAdapter
 import json
 import os
 import re
 import logging
 from datetime import datetime
+import hmac
+import hashlib
+from typing import List
 
 app = FastAPI()
 LOG_PATH = "src/msteamuat/alert_log.json"
@@ -13,6 +17,29 @@ LOG_PATH = "src/msteamuat/alert_log.json"
 # Configuration flags for filtering
 FILTER_ENABLED = True
 ALLOWED_STATUSES = ["triggered", "resolved"]
+
+# Configure logging
+logging.basicConfig(
+    filename="/home/crewai/msteamuat/crew.log",
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s"
+)
+
+# Initialize MCP tools
+def get_mcp_tools() -> List:
+    """Load MCP tools from the configured MCP server."""
+    server_params = {
+        "url": os.getenv("MCP_SERVER_URL", "http://10.10.6.243:5000/sse"),
+        "transport": os.getenv("MCP_TRANSPORT", "sse")
+    }
+    try:
+        with MCPServerAdapter(server_params) as mcp_tools:
+            tools = list(mcp_tools)
+            logging.info(f"MCP tools loaded: {[tool.name for tool in tools]}")
+            return tools
+    except Exception as e:
+        logging.error(f"Failed to load MCP tools: {str(e)}")
+        return []
 
 def extract_severity_from_title(title: str) -> str:
     """Extract severity level from alert title."""
@@ -67,10 +94,41 @@ def should_process_alert(status: str) -> bool:
         return True
     return status.lower() in [s.lower() for s in ALLOWED_STATUSES]
 
+def validate_pagerduty_signature(request: Request, payload: bytes) -> bool:
+    """Validate PagerDuty webhook signature."""
+    webhook_secret = os.getenv("PAGERDUTY_WEBHOOK_SECRET")
+    if not webhook_secret:
+        logging.error("Missing PAGERDUTY_WEBHOOK_SECRET in .env")
+        return False
+
+    signature = request.headers.get("X-PagerDuty-Signature")
+    if not signature:
+        logging.error("Missing X-PagerDuty-Signature header")
+        return False
+
+    # PagerDuty uses HMAC-SHA256
+    expected_signature = hmac.new(
+        webhook_secret.encode("utf-8"),
+        payload,
+        hashlib.sha256
+    ).hexdigest()
+    signatures = signature.split(",")
+    for sig in signatures:
+        if sig.startswith("v1="):
+            if hmac.compare_digest(sig[3:], expected_signature):
+                return True
+    logging.error(f"Invalid PagerDuty signature: {signature}")
+    return False
+
 @app.post("/pagerduty")
 async def receive_alert(request: Request):
     try:
-        payload = await request.json()
+        # Validate PagerDuty webhook signature
+        raw_payload = await request.body()
+        if not validate_pagerduty_signature(request, raw_payload):
+            raise HTTPException(status_code=403, detail="Invalid PagerDuty webhook signature")
+
+        payload = json.loads(raw_payload)
         if isinstance(payload, list):
             logging.info("Payload is a list")
             item = payload[0]
@@ -114,10 +172,13 @@ async def receive_alert(request: Request):
 
         logging.info(f"Processed alert: severity={alert['severity']}, metric={alert['metric']}, status={alert['status']}")
 
+        # Save alert to log
         with open(LOG_PATH, "a") as f:
             f.write(json.dumps(alert) + "\n")
 
-        result = run_alert_pipeline(alert)
+        # Load MCP tools and pass to pipeline
+        mcp_tools = get_mcp_tools()
+        result = run_alert_pipeline(alert, mcp_tools)
         return JSONResponse(content={"status": "received", "result": result})
 
     except ValueError as ve:
@@ -126,6 +187,8 @@ async def receive_alert(request: Request):
             content={"status": "error", "message": f"Bad format: {str(ve)}"},
             status_code=400
         )
+    except HTTPException as he:
+        raise he
     except Exception as e:
         logging.error(f"Processing error: {e}")
         return JSONResponse(
