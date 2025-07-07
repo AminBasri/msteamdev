@@ -21,7 +21,7 @@ class AlertDetail(BaseModel):
     escalation_reason: str
 
 class RecommendedActions(BaseModel):
-    actions: List[str] = Field(..., min_length=1, max_length=3, description="List of recommended actions")
+    actions: List[str] = Field(..., min_items=1, max_items=3, description="List of recommended actions")
 
     def format_for_email(self) -> str:
         return "\n".join([f"- {action}" for action in self.actions])
