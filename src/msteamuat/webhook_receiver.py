@@ -1,3 +1,5 @@
+# src/msteamuat/webhook_receiver.py
+
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
 from msteamuat.crew import run_alert_pipeline
@@ -7,8 +9,6 @@ import os
 import re
 import logging
 from datetime import datetime
-import hmac
-import hashlib
 from typing import List
 
 app = FastAPI()
@@ -35,7 +35,8 @@ def get_mcp_tools() -> List:
     try:
         with MCPServerAdapter(server_params) as mcp_tools:
             tools = list(mcp_tools)
-            logging.info(f"MCP tools loaded: {[tool.name for tool in tools]}")
+            logging.info(f"MCP tools loaded: {[tool.name for tool in tools if hasattr(tool, 'name')]}")
+            logging.info(f"MCP tool details: {[str(tool) for tool in tools]}")
             return tools
     except Exception as e:
         logging.error(f"Failed to load MCP tools: {str(e)}")
@@ -94,41 +95,20 @@ def should_process_alert(status: str) -> bool:
         return True
     return status.lower() in [s.lower() for s in ALLOWED_STATUSES]
 
-def validate_pagerduty_signature(request: Request, payload: bytes) -> bool:
-    """Validate PagerDuty webhook signature."""
-    webhook_secret = os.getenv("PAGERDUTY_WEBHOOK_SECRET")
-    if not webhook_secret:
-        logging.error("Missing PAGERDUTY_WEBHOOK_SECRET in .env")
-        return False
-
-    signature = request.headers.get("X-PagerDuty-Signature")
-    if not signature:
-        logging.error("Missing X-PagerDuty-Signature header")
-        return False
-
-    # PagerDuty uses HMAC-SHA256
-    expected_signature = hmac.new(
-        webhook_secret.encode("utf-8"),
-        payload,
-        hashlib.sha256
-    ).hexdigest()
-    signatures = signature.split(",")
-    for sig in signatures:
-        if sig.startswith("v1="):
-            if hmac.compare_digest(sig[3:], expected_signature):
-                return True
-    logging.error(f"Invalid PagerDuty signature: {signature}")
-    return False
-
 @app.post("/pagerduty")
 async def receive_alert(request: Request):
     try:
-        # Validate PagerDuty webhook signature
+        # Read and log raw payload for debugging
         raw_payload = await request.body()
-        if not validate_pagerduty_signature(request, raw_payload):
-            raise HTTPException(status_code=403, detail="Invalid PagerDuty webhook signature")
+        logging.info(f"Received webhook payload (no signature validation): {raw_payload.decode('utf-8')}")
+        
+        # Parse payload
+        try:
+            payload = json.loads(raw_payload)
+        except json.JSONDecodeError as jde:
+            logging.error(f"JSON parsing error: {str(jde)}")
+            raise ValueError(f"Invalid JSON format: {str(jde)}")
 
-        payload = json.loads(raw_payload)
         if isinstance(payload, list):
             logging.info("Payload is a list")
             item = payload[0]
@@ -187,8 +167,6 @@ async def receive_alert(request: Request):
             content={"status": "error", "message": f"Bad format: {str(ve)}"},
             status_code=400
         )
-    except HTTPException as he:
-        raise he
     except Exception as e:
         logging.error(f"Processing error: {e}")
         return JSONResponse(

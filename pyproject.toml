@@ -13,6 +13,7 @@ dependencies = [
     "langchain_ollama",
     "python-dotenv",
     "pydantic",
+    "pdpyras",
     "requests"
 ]
 

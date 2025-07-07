@@ -2,7 +2,7 @@ import os
 import json
 from datetime import datetime, timedelta, timezone
 
-LOG_FILE = "src/msteam/alert_log.json"
+LOG_FILE = "src/msteamuat/alert_log.json"
 
 def _load_log():
     """Load alert log from file, returning an empty list if file doesn't exist."""
