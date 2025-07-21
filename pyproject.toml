@@ -14,7 +14,13 @@ dependencies = [
     "python-dotenv",
     "pydantic",
     "pdpyras",
-    "requests"
+    "requests",
+    "mcp",
+    "pagerduty",
+    "pip",
+    "setuptools",
+    "wheel",
+    "mcpadapt"
 ]
 
 [project.scripts]

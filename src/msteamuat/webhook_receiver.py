@@ -2,16 +2,22 @@
 
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
-from msteamuat.crew import run_alert_pipeline
-from crewai_tools import MCPServerAdapter
+from msteamuat.crew import start_alert_pipeline
 import json
 import os
 import re
 import logging
 from datetime import datetime
 from typing import List
-
-app = FastAPI()
+'''
+# ✅ MCP Import Check
+try:
+    import mcp
+    print("✅ MCP module available in FastAPI context")
+except ImportError:
+    print("❌ MCP module missing in FastAPI runtime")
+'''
+app = FastAPI(title="PagerDuty Webhook Receiver")
 LOG_PATH = "src/msteamuat/alert_log.json"
 
 # Configuration flags for filtering
@@ -20,27 +26,25 @@ ALLOWED_STATUSES = ["triggered", "resolved"]
 
 # Configure logging
 logging.basicConfig(
-    filename="/home/crewai/msteamuat/crew.log",
+    filename="crew.log",
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
-# Initialize MCP tools
-def get_mcp_tools() -> List:
-    """Load MCP tools from the configured MCP server."""
-    server_params = {
-        "url": os.getenv("MCP_SERVER_URL", "http://10.10.6.243:5000/sse"),
-        "transport": os.getenv("MCP_TRANSPORT", "sse")
-    }
-    try:
-        with MCPServerAdapter(server_params) as mcp_tools:
-            tools = list(mcp_tools)
-            logging.info(f"MCP tools loaded: {[tool.name for tool in tools if hasattr(tool, 'name')]}")
-            logging.info(f"MCP tool details: {[str(tool) for tool in tools]}")
-            return tools
-    except Exception as e:
-        logging.error(f"Failed to load MCP tools: {str(e)}")
-        return []
+# Dedicated logger for webhook receiver (goes to webhook_receiver.log)
+webhook_logger = logging.getLogger("webhook_receiver")
+webhook_logger.setLevel(logging.INFO)
+
+# Prevent double logging to root logger (avoids duplication in crew.log)
+webhook_logger.propagate = False
+
+webhook_handler = logging.FileHandler("webhook_receiver.log")
+webhook_handler.setLevel(logging.INFO)
+formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+webhook_handler.setFormatter(formatter)
+
+# Attach handler
+webhook_logger.addHandler(webhook_handler)
 
 def extract_severity_from_title(title: str) -> str:
     """Extract severity level from alert title."""
@@ -72,8 +76,7 @@ def extract_metric_from_title(title: str) -> str:
     for pattern in all_patterns:
         match = re.search(pattern, title, re.IGNORECASE)
         if match:
-            metric = match.group(1).lower().replace(" ", "_")
-            return metric
+            return match.group(1).lower().replace(" ", "_")
     
     fallback_match = re.search(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b", title)
     if fallback_match:
@@ -82,7 +85,6 @@ def extract_metric_from_title(title: str) -> str:
     return "unknown"
 
 def validate_timestamp(timestamp: str) -> bool:
-    """Validate timestamp format."""
     try:
         datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
         return True
@@ -90,7 +92,6 @@ def validate_timestamp(timestamp: str) -> bool:
         return False
 
 def should_process_alert(status: str) -> bool:
-    """Determine if alert should be processed based on filtering configuration."""
     if not FILTER_ENABLED:
         return True
     return status.lower() in [s.lower() for s in ALLOWED_STATUSES]
@@ -98,23 +99,20 @@ def should_process_alert(status: str) -> bool:
 @app.post("/pagerduty")
 async def receive_alert(request: Request):
     try:
-        # Read and log raw payload for debugging
         raw_payload = await request.body()
-        logging.info(f"Received webhook payload (no signature validation): {raw_payload.decode('utf-8')}")
-        
-        # Parse payload
+        webhook_logger.info(f"Received webhook payload: {raw_payload.decode('utf-8')}")
+
         try:
             payload = json.loads(raw_payload)
         except json.JSONDecodeError as jde:
-            logging.error(f"JSON parsing error: {str(jde)}")
+            webhook_logger.error(f"JSON parsing error: {str(jde)}")
             raise ValueError(f"Invalid JSON format: {str(jde)}")
 
+        event = None
         if isinstance(payload, list):
-            logging.info("Payload is a list")
             item = payload[0]
             event = item.get("body", {}).get("event")
         else:
-            logging.info("Payload is a dict")
             event = payload.get("event")
 
         if not event:
@@ -130,6 +128,7 @@ async def receive_alert(request: Request):
 
         status = data.get("status", "unknown").lower()
         occurred_at = event.get("occurred_at", "unknown")
+
         if not validate_timestamp(occurred_at):
             raise ValueError("Invalid timestamp format in 'occurred_at'")
 
@@ -140,6 +139,11 @@ async def receive_alert(request: Request):
                 status_code=200
             )
 
+        # Extract from_email with fallback
+        from_email = data.get("from_email") or os.getenv("SENDER_EMAIL", "noramin@infopro.com.my")
+        if not data.get("from_email"):
+            webhook_logger.warning(f"Missing 'from_email' in alert data for incident {data.get('number', 'N/A')}. Using fallback email: {from_email}")
+
         alert = {
             "severity": extract_severity_from_title(title),
             "metric": extract_metric_from_title(title),
@@ -147,28 +151,27 @@ async def receive_alert(request: Request):
             "timestamp": occurred_at,
             "incident_number": data.get("number", "unknown"),
             "title": title,
-            "original_metric": title
+            "original_metric": title,
+            "from_email": from_email
         }
 
-        logging.info(f"Processed alert: severity={alert['severity']}, metric={alert['metric']}, status={alert['status']}")
+        webhook_logger.info(f"Processed alert: {json.dumps(alert, indent=2)}")
 
         # Save alert to log
         with open(LOG_PATH, "a") as f:
             f.write(json.dumps(alert) + "\n")
 
-        # Load MCP tools and pass to pipeline
-        mcp_tools = get_mcp_tools()
-        result = run_alert_pipeline(alert, mcp_tools)
+        result = start_alert_pipeline(alert)
         return JSONResponse(content={"status": "received", "result": result})
 
     except ValueError as ve:
-        logging.error(f"Payload parsing error: {ve}")
+        webhook_logger.error(f"Payload parsing error: {ve}")
         return JSONResponse(
             content={"status": "error", "message": f"Bad format: {str(ve)}"},
             status_code=400
         )
     except Exception as e:
-        logging.error(f"Processing error: {e}")
+        webhook_logger.error(f"Processing error: {e}")
         return JSONResponse(
             content={"status": "error", "message": f"Processing error: {str(e)}"},
             status_code=500
@@ -176,7 +179,6 @@ async def receive_alert(request: Request):
 
 @app.get("/config")
 async def get_config():
-    """Get current filtering configuration."""
     return JSONResponse(content={
         "filter_enabled": FILTER_ENABLED,
         "allowed_statuses": ALLOWED_STATUSES
@@ -184,7 +186,6 @@ async def get_config():
 
 @app.post("/config")
 async def update_config(request: Request):
-    """Update filtering configuration."""
     global FILTER_ENABLED, ALLOWED_STATUSES
     try:
         config = await request.json()

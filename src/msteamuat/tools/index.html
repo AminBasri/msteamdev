@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Incident Management Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <style>
+        .incident-card {
+            transition: all 0.3s ease;
+        }
+        .incident-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+        }
+    </style>
+</head>
+<body class="bg-gray-50">
+    <div class="min-h-screen">
+        <!-- Header -->
+        <header class="bg-white shadow-sm">
+            <div class="max-w-7xl mx-auto px-4 py-4 sm:px-6 lg:px-8 flex justify-between items-center">
+                <h1 class="text-xl font-bold text-gray-900">Incident Management</h1>
+                <button id="newIncidentBtn" class="px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
+                    Create New Incident
+                </button>
+            </div>
+        </header>
+
+        <main class="max-w-7xl mx-auto px-4 py-6 sm:px-6 lg:px-8">
+            <!-- Stats -->
+            <div class="grid grid-cols-1 gap-5 sm:grid-cols-3 mb-6">
+                <div class="bg-white overflow-hidden shadow rounded-lg">
+                    <div class="px-4 py-5 sm:p-6">
+                        <div class="flex items-center">
+                            <div class="flex-shrink-0 bg-red-500 rounded-md p-3">
+                                <svg class="h-6 w-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+                                </svg>
+                            </div>
+                            <div class="ml-5 w-0 flex-1">
+                                <h3 class="text-sm font-medium text-gray-500 truncate">New Incidents</h3>
+                                <p id="newIncidentsCount" class="text-2xl font-semibold text-gray-900">0</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="bg-white overflow-hidden shadow rounded-lg">
+                    <div class="px-4 py-5 sm:p-6">
+                        <div class="flex items-center">
+                            <div class="flex-shrink-0 bg-yellow-500 rounded-md p-3">
+                                <svg class="h-6 w-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"></path>
+                                </svg>
+                            </div>
+                            <div class="ml-5 w-0 flex-1">
+                                <h3 class="text-sm font-medium text-gray-500 truncate">Acknowledged</h3>
+                                <p id="ackIncidentsCount" class="text-2xl font-semibold text-gray-900">0</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="bg-white overflow-hidden shadow rounded-lg">
+                    <div class="px-4 py-5 sm:p-6">
+                        <div class="flex items-center">
+                            <div class="flex-shrink-0 bg-green-500 rounded-md p-3">
+                                <svg class="h-6 w-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                                </svg>
+                            </div>
+                            <div class="ml-5 w-0 flex-1">
+                                <h3 class="text-sm font-medium text-gray-500 truncate">Resolved</h3>
+                                <p id="resolvedIncidentsCount" class="text-2xl font-semibold text-gray-900">0</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Main content -->
+            <div class="flex flex-col">
+                <div class="-my-2 overflow-x-auto sm:-mx-6 lg:-mx-8">
+                    <div class="py-2 align-middle inline-block min-w-full sm:px-6 lg:px-8">
+                        <div class="shadow overflow-hidden border-b border-gray-200 sm:rounded-lg">
+                            <div class="bg-white pt-4 px-4 flex justify-between items-center">
+                                <h2 class="text-lg font-medium text-gray-900">Recent Incidents</h2>
+                            </div>
+                            <div id="incidentsList" class="divide-y divide-gray-200">
+                                <!-- Incidents will be populated here -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Logs Panel -->
+            <div class="mt-8">
+                <h2 class="text-lg font-medium text-gray-900">Logs</h2>
+                <div id="logsPanel" class="bg-gray-800 text-white p-4 rounded-md"></div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        const apiUrl = "http://127.0.0.1:8001/pagerduty"; // Update with your webhook receiver URL
+        let lastIncidentCount = 0; // Track the last count of incidents
+        let incidentCounter = 1; // Counter for incident numbers
+
+        function fetchIncidents() {
+            // This function should fetch incidents from your MCP_Server or another source
+            // For demonstration, we will simulate fetching incidents
+            const incidents = [
+                { id: `id-${incidentCounter}`, number: incidentCounter++, title: "Incident 1", description: "Description for incident 1", priority: "P1", status: "new" },
+                { id: `id-${incidentCounter}`, number: incidentCounter++, title: "Incident 2", description: "Description for incident 2", priority: "P2", status: "acknowledged" },
+                { id: `id-${incidentCounter}`, number: incidentCounter++, title: "Incident 3", description: "Description for incident 3", priority: "P3", status: "resolved" }
+            ];
+
+            $('#incidentsList').empty();
+            let newCount = 0, ackCount = 0, resolvedCount = 0;
+
+            incidents.forEach(incident => {
+                $('#incidentsList').append(`
+                    <div class="bg-white incident-card p-4" data-id="${incident.id}">
+                        <h3 class="text-lg font-medium text-gray-900">Incident #${incident.number} (ID: ${incident.id})</h3>
+                        <p class="text-sm text-gray-500">${incident.description}</p>
+                        <p class="text-sm text-gray-500">Priority: ${incident.priority} | Status: ${incident.status}</p>
+                        <div class="mt-2">
+                            <button class="acknowledge-btn bg-yellow-500 text-white px-2 py-1 rounded" ${incident.status === 'acknowledged' ? 'disabled' : ''}>Acknowledge</button>
+                            <button class="resolve-btn bg-green-500 text-white px-2 py-1 rounded" ${incident.status === 'resolved' ? 'disabled' : ''}>Resolve</button>
+                        </div>
+                    </div>
+                `);
+
+                // Count incidents based on status
+                if (incident.status === 'new') newCount++;
+                if (incident.status === 'acknowledged') ackCount++;
+                if (incident.status === 'resolved') resolvedCount++;
+            });
+
+            // Update counts
+            $('#newIncidentsCount').text(newCount);
+            $('#ackIncidentsCount').text(ackCount);
+            $('#resolvedIncidentsCount').text(resolvedCount);
+        }
+
+        function triggerWebhook(incidentData) {
+            $.post(apiUrl, incidentData)
+                .done(function(data) {
+                    $('#logsPanel').append("<p>Webhook triggered successfully: " + JSON.stringify(data) + "</p>");
+                    fetchIncidents(); // Refresh incidents after triggering
+                })
+                .fail(function() {
+                    $('#logsPanel').append("<p>Error triggering webhook.</p>");
+                });
+        }
+
+        $(document).ready(function() {
+            fetchIncidents();
+
+            $('#newIncidentBtn').click(function() {
+                const incidentData = {
+                    title: "New Incident Triggered",
+                    description: "This is a test incident triggered from the UI.",
+                    priority: "P1"
+                };
+
+                triggerWebhook(incidentData); // Trigger the webhook to create a new incident
+            });
+
+            $(document).on('click', '.acknowledge-btn', function() {
+                const incidentId = $(this).closest('.incident-card').data('id');
+                // Call the acknowledge endpoint on MCP_Server
+                // Implement the logic to acknowledge the incident here
+            });
+
+            $(document).on('click', '.resolve-btn', function() {
+                const incidentId = $(this).closest('.incident-card').data('id');
+                // Call the resolve endpoint on MCP_Server
+                // Implement the logic to resolve the incident here
+            });
+        });
+    </script>
+</body>
+</html>

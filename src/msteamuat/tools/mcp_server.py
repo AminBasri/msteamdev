@@ -1,154 +1,307 @@
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import StreamingResponse
+# src/msteamuat/tools/mcp_server.py
+
+from fastapi import FastAPI, HTTPException, Request, Response
 from pydantic import BaseModel
-import pdpyras
+from pdpyras import APISession  # Reverted to pdpyras
 import os
 import logging
 import json
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 
-app = FastAPI()
+app = FastAPI(title="PagerDuty MCP Server")
 
-# Logging
-logging.basicConfig(
-    filename="/home/crewai/msteamuat/mcp_server.log",
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s"
-)
+# Configure logger
+logger = logging.getLogger('mcp_server')
+logger.setLevel(logging.INFO)
+logger.propagate = False
+logger.handlers.clear()
 
-# Request models
+# Add FileHandler for mcp_server.log
+file_handler = logging.FileHandler('/home/crewai/msteamuat/mcp_server.log')
+file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+logger.addHandler(file_handler)
+
+# Add StreamHandler for console output
+stream_handler = logging.StreamHandler()
+stream_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+logger.addHandler(stream_handler)
+
 class IncidentRequest(BaseModel):
     incident_number: str
-    from_email: str = os.getenv("SENDER_EMAIL", "noc@example.com")
+    from_email: str = os.getenv("SENDER_EMAIL", "noramin@infopro.com.my")
 
 class RelatedAlertsRequest(BaseModel):
-    service_id: str
-    start_time: str  # ISO 8601 format
-    end_time: str    # ISO 8601 format
+    service_id: str = os.getenv("PAGERDUTY_SERVICE_ID", "PIU29W4")
+    start_time: str
+    end_time: str
 
-# PagerDuty API
 def get_pagerduty_session():
-    api_token = os.getenv("PAGERDUTY_API_TOKEN")
-    if not api_token:
-        logging.error("Missing PAGERDUTY_API_TOKEN")
+    token = os.getenv("PAGERDUTY_API_TOKEN")
+    if not token:
+        logger.critical("PAGERDUTY_API_TOKEN environment variable is not set")
         raise HTTPException(status_code=500, detail="Missing PagerDuty API token")
-    return pdpyras.APISession(api_token)
+    return APISession(token)  # Reverted to pdpyras.APISession
 
 def find_incident_by_number(session, incident_number: str):
+    logger.debug(f"Searching for incident number: {incident_number}")
     try:
         for incident in session.iter_all("incidents"):
+            logger.debug(f"Checking incident: {incident.get('incident_number')}")
             if str(incident.get("incident_number")) == str(incident_number):
+                logger.info(f"Found incident: {incident_number}")
                 return incident
+        logger.warning(f"Incident {incident_number} not found")
         return None
     except Exception as e:
-        logging.error(f"Error finding incident: {e}")
-        raise HTTPException(status_code=500, detail="Failed to find incident by number")
+        logger.error(f"Failed to fetch incidents: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch incidents: {str(e)}")
 
-# SSE tool list for CrewAI
-@app.get("/sse")
-async def sse_endpoint():
-    async def stream():
-        tools = {
-            "tools": [
-                "GetIncidentStatus",
-                "AcknowledgeIncident",
-                "GetRelatedAlerts"
-            ]
-        }
-        yield f"data: {json.dumps(tools)}\n\n"
-        while True:
-            yield "data: {\"event\": \"ping\"}\n\n"
-            await asyncio.sleep(30)
-    logging.info("Serving /sse endpoint")
-    return StreamingResponse(stream(), media_type="text/event-stream")
-
-# Get incident status
-@app.post("/mcp/GetIncidentStatus")
-async def get_incident_status(data: IncidentRequest):
+@app.post("/mcp")
+async def mcp_handler(request: Request):
     try:
-        session = get_pagerduty_session()
-        incident = find_incident_by_number(session, data.incident_number)
-        if not incident:
-            raise HTTPException(status_code=404, detail="Incident not found")
+        body = await request.json()
+        method = body.get("method")
+        params = body.get("params", {})
+        req_id = body.get("id", None)  # Allow None for notifications
 
-        return {
-            "id": incident["id"],
-            "incident_number": incident["incident_number"],
-            "status": incident["status"]
-        }
-    except Exception as e:
-        logging.error(f"Error in GetIncidentStatus: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.debug(f"Received MCP request: method={method}, id={req_id}, params={params}")
 
-# Acknowledge incident
-@app.post("/mcp/AcknowledgeIncident")
-async def acknowledge_incident(data: IncidentRequest):
-    try:
-        session = get_pagerduty_session()
-        incident = find_incident_by_number(session, data.incident_number)
-        if not incident:
-            raise HTTPException(status_code=404, detail="Incident not found")
-
-        incident_id = incident["id"]
-        incident_number = incident["incident_number"]
-
-        # Perform the acknowledge operation
-        result = session.rput(
-            f"/incidents/{incident_id}",
-            json={"incident": {"type": "incident_reference", "status": "acknowledged"}},
-            headers={"From": data.from_email}
-        )
-
-        logging.info(f"Acknowledged incident {incident_number}")
-        return {
-            "result": f"Incident #{incident_number} acknowledged successfully",
-            "id": incident_id,
-            "incident_number": incident_number,
-            "ack_response": result  # helpful for debugging or confirmation
-        }
-
-    except pdpyras.PDClientError as e:
-        logging.error(f"PagerDuty API error: {e}")
-        raise HTTPException(status_code=500, detail=f"PagerDuty API error: {e}")
-    except Exception as e:
-        logging.error(f"Error in AcknowledgeIncident: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-# Related alerts
-@app.post("/mcp/GetRelatedAlerts")
-async def get_related_alerts(data: RelatedAlertsRequest):
-    try:
-        session = get_pagerduty_session()
-        response = session.get(
-            "/incidents",
-            params={
-                "service_ids[]": data.service_id,
-                "since": data.start_time,
-                "until": data.end_time
+        if method == "initialize":
+            return {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {"tools": {}},
+                    "serverInfo": {"name": "pagerduty-mcp-server", "version": "1.0.0"}
+                }
             }
-        )
-        if response.status_code != 200:
-            logging.error(f"Failed to get related alerts for service {data.service_id}: {response.text}")
-            raise HTTPException(status_code=response.status_code, detail="Failed to get related alerts")
-
-        incidents = response.json()["incidents"]
-        alerts = [
-            {
-                "id": inc["id"],
-                "incident_number": inc["incident_number"],
-                "title": inc["title"],
-                "status": inc["status"],
-                "created_at": inc["created_at"]
+        elif method == "notifications/initialized":
+            logger.info("Received notifications/initialized")
+            return {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": None  # Proper JSON-RPC response
             }
-            for inc in incidents
-        ]
-        logging.info(f"Retrieved {len(alerts)} related alerts for service {data.service_id}")
-        return {"content": [{"text": json.dumps(alerts)}]}
+        elif method == "tools/list":
+            return {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": {
+                    "tools": [
+                        {
+                            "name": "GetIncidentStatus",
+                            "description": "Get the status of a PagerDuty incident by incident number",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "incident_number": {
+                                        "type": "string",
+                                        "description": "The incident number to check"
+                                    }
+                                },
+                                "required": ["incident_number"],
+                                "json_schema_extra": {}
+                            }
+                        },
+                        {
+                            "name": "AcknowledgeIncident",
+                            "description": "Acknowledge a PagerDuty incident",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "incident_number": {"type": "string"},
+                                    "from_email": {"type": "string"}
+                                },
+                                "required": ["incident_number"],
+                                "json_schema_extra": {}
+                            }
+                        },
+                        {
+                            "name": "GetRelatedAlerts",
+                            "description": "Get related alerts for a PagerDuty service within a time range",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "service_id": {"type": "string"},
+                                    "start_time": {"type": "string"},
+                                    "end_time": {"type": "string"}
+                                },
+                                "required": ["start_time", "end_time"],
+                                "json_schema_extra": {}
+                            }
+                        }
+                    ]
+                }
+            }
+        elif method == "tools/call":
+            tool = params.get("name")
+            args = params.get("arguments", {})
+            if tool == "GetIncidentStatus":
+                return await call_get_incident_status(req_id, args)
+            elif tool == "AcknowledgeIncident":
+                return await call_acknowledge_incident(req_id, args)
+            elif tool == "GetRelatedAlerts":
+                return await call_get_related_alerts(req_id, args)
+            else:
+                return {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "error": {"code": -32601, "message": f"Unknown tool: {tool}"}
+                }
+        return {
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "error": {"code": -32601, "message": f"Unknown method: {method}"}
+        }
+    except json.JSONDecodeError:
+        logger.error("Invalid JSON in request body")
+        return {
+            "jsonrpc": "2.0",
+            "id": None,
+            "error": {"code": -32700, "message": "Parse error: Invalid JSON"}
+        }
     except Exception as e:
-        logging.error(f"Error in GetRelatedAlerts: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception(f"Failed to process MCP request: {str(e)}")
+        return {
+            "jsonrpc": "2.0",
+            "id": req_id if 'req_id' in locals() else 1,
+            "error": {"code": -32603, "message": f"Internal error: {str(e)}"}
+        }
 
-# Run locally
+async def call_get_incident_status(req_id, args, max_retries=3):
+    for attempt in range(max_retries):
+        try:
+            loop = asyncio.get_running_loop()
+            with ThreadPoolExecutor() as executor:
+                def logic():
+                    session = get_pagerduty_session()
+                    incident = find_incident_by_number(session, args["incident_number"])
+                    if not incident:
+                        raise HTTPException(status_code=404, detail="Incident not found")
+                    return {
+                        "id": incident["id"],
+                        "incident_number": incident["incident_number"],
+                        "status": incident["status"]
+                    }
+                result = await loop.run_in_executor(executor, logic)
+                logger.info(f"Fetching status for incident number: {args['incident_number']}, Status: {result['status']}")
+                return {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "result": {"content": [{"type": "text", "text": json.dumps(result)}]}
+                }
+        except Exception as e:
+            logger.error(f"Attempt {attempt + 1}/{max_retries} failed for GetIncidentStatus: {str(e)}")
+            if attempt == max_retries - 1:
+                return {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "error": {"code": -32603, "message": f"Failed after {max_retries} attempts: {str(e)}"}
+                }
+            await asyncio.sleep(1)
+
+async def call_acknowledge_incident(req_id, args):
+    loop = asyncio.get_running_loop()
+    with ThreadPoolExecutor() as executor:
+        try:
+            def logic():
+                logger.info(f"AcknowledgeIncident args received: {args}")
+                session = get_pagerduty_session()
+                email = args.get("from_email") or os.getenv("SENDER_EMAIL", "noramin@infopro.com.my")
+                incident = find_incident_by_number(session, args["incident_number"])
+                if not incident:
+                    raise HTTPException(status_code=404, detail="Incident not found")
+                if incident["status"] == "acknowledged":
+                    logger.info(f"Incident {incident['incident_number']} already acknowledged")
+                    return {
+                        "status": "already_acknowledged",
+                        "incident_number": incident['incident_number']
+                    }
+                session.rput(
+                    f"/incidents/{incident['id']}",
+                    json={"incident": {"type": "incident_reference", "status": "acknowledged"}},
+                    headers={"From": email}
+                )
+                verified = find_incident_by_number(session, args["incident_number"])
+                if verified["status"] != "acknowledged":
+                    raise HTTPException(status_code=500, detail="Failed to acknowledge")
+                logger.info(f"Incident {incident['incident_number']} acknowledged successfully")
+                return {
+                    "status": "acknowledged",
+                    "incident_id": verified["id"],
+                    "service_id": verified['service']['id'],
+                    "acknowledged_at": verified['last_status_change_at']
+                }
+            result = await loop.run_in_executor(executor, logic)
+            return {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": {"content": [{"type": "text", "text": json.dumps(result)}]}
+            }
+        except Exception as e:
+            logger.error(f"Failed to acknowledge incident: {str(e)}")
+            return {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "error": {"code": -32603, "message": f"Failed to acknowledge incident: {str(e)}"}
+            }
+
+async def call_get_related_alerts(req_id, args):
+    loop = asyncio.get_running_loop()
+    with ThreadPoolExecutor() as executor:
+        try:
+            def logic():
+                session = get_pagerduty_session()
+                try:
+                    start = datetime.fromisoformat(args["start_time"].replace("Z", "+00:00"))
+                    end = datetime.fromisoformat(args["end_time"].replace("Z", "+00:00"))
+                except ValueError as e:
+                    raise HTTPException(status_code=400, detail=f"Invalid date format: {str(e)}")
+                if (end - start).days > 7:
+                    raise HTTPException(status_code=400, detail="Max 7 days supported")
+                all_incidents = []
+                params = {
+                    "service_ids[]": args["service_id"],
+                    "since": args["start_time"],
+                    "until": args["end_time"],
+                    "limit": 100,
+                    "offset": 0
+                }
+                while True:
+                    response = session.get("/incidents", params=params)
+                    if response.status_code != 200:
+                        break
+                    items = response.json().get("incidents", [])
+                    all_incidents.extend(items)
+                    if len(items) < 100:
+                        break
+                    params["offset"] += 100
+                logger.info(f"Found {len(all_incidents)} incidents in range {args['start_time']} to {args['end_time']}")
+                return {
+                    "content": [{
+                        "text": json.dumps(all_incidents),
+                        "metadata": {
+                            "count": len(all_incidents),
+                            "range": f"{args['start_time']} to {args['end_time']}"
+                        }
+                    }]
+                }
+            result = await loop.run_in_executor(executor, logic)
+            return {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": result
+            }
+        except Exception as e:
+            logger.error(f"Failed to get related alerts: {str(e)}")
+            return {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "error": {"code": -32603, "message": f"Failed to get related alerts: {str(e)}"}
+            }
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=6006)
+    uvicorn.run(app, host="0.0.0.0", port=6006, log_level="info")

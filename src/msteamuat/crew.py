@@ -2,27 +2,20 @@
 
 import os
 import yaml
-from threading import Timer
+from threading import Thread
 from datetime import datetime, timedelta, timezone
-from dotenv import load_dotenv
 from functools import wraps
 import time
 import logging
 import asyncio
 import json
 import re
+import requests
 from crewai import Agent, Task, Crew
 from msteamuat.llm import get_llm
 from msteamuat.tools.alert_store import check_escalation_eligibility, _load_log
-from crewai_tools import MCPServerAdapter
-from src.msteamuat.tools.custom_tool import (
-    GetIncidentStatusTool,
-    AcknowledgeIncidentTool,
-    GetRelatedAlertsTool
-)
-
-
-load_dotenv()
+from crewai.tools import tool
+from pdpyras import APISession
 
 # Configure logging
 logger = logging.getLogger('crew')
@@ -40,14 +33,94 @@ stream_handler = logging.StreamHandler()
 stream_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
 logger.addHandler(stream_handler)
 
-# Track scheduled escalations to prevent duplicates
-scheduled_escalations = set()
+MCP_SERVER_URL = os.getenv("MCP_SERVER_URL", "http://localhost:6006/mcp")
+from_email = os.getenv("SENDER_EMAIL", "noramin@infopro.com.my")
+
+
+# Correct Tool Implementation using direct HTTP requests
+@tool("GetIncidentStatus")
+def get_incident_status(incident_number: str) -> str:
+    """
+    Get the status of a PagerDuty incident by incident number.
+    Input should be the incident number as a string.
+    """
+    jsonrpc_request = {
+        "jsonrpc": "2.0",
+        "method": "tools/call",
+        "params": {"name": "GetIncidentStatus", "arguments": {"incident_number": incident_number}},
+        "id": "1"
+    }
+    try:
+        response = requests.post(MCP_SERVER_URL, json=jsonrpc_request, timeout=10)
+        response.raise_for_status()
+        return response.text
+    except requests.RequestException as e:
+        logger.error(f"GetIncidentStatus tool failed: {e}")
+        return f"Error calling MCP server: {e}"
+
+@tool("AcknowledgeIncident")
+def acknowledge_incident(incident_number: str, from_email: str) -> str:
+    """
+    Acknowledge a PagerDuty incident.
+    Input should be the incident number and the email of the user acknowledging the incident.
+    """
+    valid_from_email = os.getenv("SENDER_EMAIL", "noramin@infopro.com.my")
+    jsonrpc_request = {
+        "jsonrpc": "2.0",
+        "method": "tools/call",
+        "params": {"name": "AcknowledgeIncident", "arguments": {"incident_number": incident_number, "from_email": valid_from_email}},
+        "id": "2"
+    }
+    try:
+        response = requests.post(MCP_SERVER_URL, json=jsonrpc_request, timeout=15)
+        response.raise_for_status()
+        return response.text
+    except requests.RequestException as e:
+        logger.error(f"AcknowledgeIncident tool failed: {e}")
+        return f"Error calling MCP server: {e}"
+@tool("GetRelatedAlerts")
+def get_related_alerts(service_id: str, start_time: str, end_time: str) -> str:
+    """
+    Get related alerts for a PagerDuty service within a time range.
+    Input should be the service ID, start time (ISO 8601 format), and end time (ISO 8601 format).
+    """
+    jsonrpc_request = {
+        "jsonrpc": "2.0",
+        "method": "tools/call",
+        "params": {"name": "GetRelatedAlerts", "arguments": {"service_id": service_id, "start_time": start_time, "end_time": end_time}},
+        "id": "3"
+    }
+    try:
+        response = requests.post(MCP_SERVER_URL, json=jsonrpc_request, timeout=15)
+        response.raise_for_status()
+        return response.text
+    except requests.RequestException as e:
+        logger.error(f"GetRelatedAlerts tool failed: {e}")
+        return f"Error calling MCP server: {e}"
+
+def get_mcp_tools() -> list:
+    """Load MCP tools."""
+    logger.info("Loading MCP tools...")
+    mcp_tools = [get_incident_status, acknowledge_incident, get_related_alerts]
+    logger.info("Successfully loaded MCP tools.")
+    return mcp_tools
 
 def retry(max_attempts=3, delay=2):
-    """Retry decorator for CrewAI tasks."""
+    """Retry decorator for CrewAI tasks, supporting both sync and async functions."""
     def decorator(func):
         @wraps(func)
-        def wrapper(*args, **kwargs):
+        async def async_wrapper(*args, **kwargs):
+            for attempt in range(max_attempts):
+                try:
+                    return await func(*args, **kwargs)
+                except Exception as e:
+                    if attempt == max_attempts - 1:
+                        raise
+                    await asyncio.sleep(delay * (2 ** attempt))
+                    logger.warning(f"Retry {attempt + 1}/{max_attempts} for {func.__name__}: {e}")
+
+        @wraps(func)
+        def sync_wrapper(*args, **kwargs):
             for attempt in range(max_attempts):
                 try:
                     return func(*args, **kwargs)
@@ -56,31 +129,49 @@ def retry(max_attempts=3, delay=2):
                         raise
                     time.sleep(delay * (2 ** attempt))
                     logger.warning(f"Retry {attempt + 1}/{max_attempts} for {func.__name__}: {e}")
-        return wrapper
+
+        if asyncio.iscoroutinefunction(func):
+            return async_wrapper
+        else:
+            return sync_wrapper
     return decorator
+
+def get_pagerduty_session():
+    token = os.getenv("PAGERDUTY_API_TOKEN")
+    if not token:
+        logger.critical("PAGERDUTY_API_TOKEN environment variable is not set")
+        raise ValueError("Missing PagerDuty API token")
+    return APISession(token)
+
+def find_incident_by_number(session, incident_number: str):
+    logger.debug(f"Searching for incident number: {incident_number}")
+    try:
+        for incident in session.iter_all("incidents"):
+            if str(incident.get("incident_number")) == str(incident_number):
+                logger.info(f"Found incident: {incident_number}")
+                return incident
+        logger.warning(f"Incident {incident_number} not found")
+        return None
+    except Exception as e:
+        logger.error(f"Failed to fetch incidents: {str(e)}")
+        raise
 
 def load_yaml(path):
     """Load YAML configuration file."""
     with open(path, "r") as f:
         return yaml.safe_load(f)
 
-mcp_tools = [
-    GetIncidentStatusTool(),
-    AcknowledgeIncidentTool(),
-    GetRelatedAlertsTool()
-]
-
 def load_agents(mcp_tools=None):
-    """Load agents from YAML, ensuring valid BaseTool instances for pagerduty_manager."""
+    """Load agents from YAML."""
     agent_def = load_yaml("src/msteamuat/config/agents.yaml")
-    llm = get_llm()
     agents = {}
     for name, cfg in agent_def.items():
-        tools = cfg.get("tools", [])
+        llm = get_llm()
+        tools = []
         if name == "pagerduty_manager" and mcp_tools:
-            # Filter valid BaseTool instances
             tools = mcp_tools
-            logger.info(f"Assigned tools to pagerduty_manager: {[tool.name for tool in tools]}")
+            logger.info("Assigned MCP tools to pagerduty_manager")
+
         agents[name] = Agent(
             role=cfg["role"],
             goal=cfg["goal"],
@@ -89,11 +180,12 @@ def load_agents(mcp_tools=None):
             llm=llm,
             tools=tools
         )
+    logger.debug(f"Loaded agents: {list(agents.keys())}")
     return agents
 
 def load_tasks():
     """Load tasks from YAML."""
-    return load_yaml("src/msteamuat/config/tasks.yaml")
+    return yaml.safe_load(open("src/msteamuat/config/tasks.yaml", "r"))
 
 def check_resolution_status(alert: dict, delay_minutes: int) -> bool:
     """Check if an alert with the same incident number has resolved status within the delay period."""
@@ -104,110 +196,124 @@ def check_resolution_status(alert: dict, delay_minutes: int) -> bool:
 
     for logged_alert in alerts:
         alert_time = datetime.fromisoformat(logged_alert["timestamp"].replace("Z", "+00:00"))
-        if (logged_alert["incident_number"] == incident_number and 
-            logged_alert["status"] == "resolved" and 
+        if (logged_alert["incident_number"] == incident_number and
+            logged_alert["status"] == "resolved" and
             current_time <= alert_time <= cutoff_time):
             return True
     return False
 
-async def check_and_acknowledge_alert_task(alert: dict, mcp_tools: list):
+async def check_and_acknowledge_alert_task(alert: dict, mcp_tools: list, max_retries=3):
     """Check incident status after delay and acknowledge if triggered."""
-    delay_minutes = int(os.getenv("ACKNOWLEDGMENT_DELAY_MINUTES", "5"))
+    delay_minutes = int(os.getenv("ACKNOWLEDGMENT_DELAY_MINUTES", "1"))
     delay_seconds = delay_minutes * 60
     logger.info(f"Scheduling acknowledgment check for incident {alert['incident_number']} in {delay_seconds} seconds")
     await asyncio.sleep(delay_seconds)
 
-    pagerduty_manager = load_agents(mcp_tools).get("pagerduty_manager")
-    tasks_def = load_tasks()
-    
-    if not pagerduty_manager:
-        logger.error("Missing pagerduty_manager agent")
-        return {"status": "error", "message": "Missing pagerduty_manager agent"}
-
-    acknowledge_task = Task(
-        description=tasks_def["check_and_acknowledge_alert"]["description"].format(
-            incident_number=alert["incident_number"]
-        ),
-        expected_output=tasks_def["check_and_acknowledge_alert"]["expected_output"],
-        agent=pagerduty_manager,
-        tools=[tool for tool in mcp_tools if hasattr(tool, "name") and tool.name in [
-            "GetIncidentStatus", "AcknowledgeIncident", "GetRelatedAlerts"
-        ]]
-    )
-
     try:
-        result = pagerduty_manager.execute_task(acknowledge_task)
-        logger.info(f"Acknowledgment task result for incident {alert['incident_number']}: {result}")
+        agents = load_agents(mcp_tools)
+        pagerduty_manager = agents.get("pagerduty_manager")
+        tasks_def = load_tasks()
 
-        # Sanitize result string for JSON parsing
-        match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", result, re.DOTALL)
-        if match:
-            cleaned_result = match.group(1).strip()
-            parsed_result = json.loads(cleaned_result)
-        else:
-            logger.error("❌ JSON block not found in agent response.")
-            return {"status": "error", "message": "No valid JSON block found in agent result"}
+        if not pagerduty_manager:
+            logger.error("Missing pagerduty_manager agent")
+            raise ValueError("Missing pagerduty_manager agent")
+        
+        if not mcp_tools:
+            raise ValueError("MCP tools not available.")
 
+        logger.debug(f"PagerDuty Manager Agent: role={pagerduty_manager.role}")
+
+        task_description = tasks_def["check_and_acknowledge_alert"]["description"].format(
+            incident_number=alert["incident_number"],
+            from_email=alert.get("from_email", "noramin@infopro.com.my")
+        )
+        logger.debug(f"Task description: {task_description}")
+
+        acknowledge_task = Task(
+            description=task_description,
+            expected_output=tasks_def["check_and_acknowledge_alert"]["expected_output"],
+            agent=pagerduty_manager,
+            tools=mcp_tools,
+            async_execution=True
+        )
+
+        for attempt in range(max_retries):
+            try:
+                result = await asyncio.to_thread(pagerduty_manager.execute_task, acknowledge_task)
+                
+                logger.debug(f"Task output for incident {alert['incident_number']}: {result}")
+                logger.info(f"Raw acknowledgment task result for incident {alert['incident_number']}: {result}")
+                
+                # The result is expected to be a string, not JSON.
+                # We return it directly if it's a string, otherwise, we log an error.
+                if isinstance(result, str):
+                    # Attempt to find a JSON object within the string, if not, handle as plain text
+                    try:
+                        json_match = re.search(r'\{.*\}', result, re.DOTALL)
+                        if json_match:
+                            parsed_result = json.loads(json_match.group(0))
+                            return parsed_result
+                        else:
+                            # If no JSON, return the raw string in a structured dict
+                            return {"status": "success", "message": result}
+                    except json.JSONDecodeError:
+                        return {"status": "success", "message": result} # Return raw string if not JSON
+                else:
+                    logger.error(f"Task output is not a string for incident {alert['incident_number']}: {result}")
+                    return {"status": "error", "message": "Task output is not a string", "raw_response": result}
+
+            except Exception as e:
+                logger.error(f"Attempt {attempt + 1}/{max_retries} failed for incident {alert['incident_number']}: {str(e)}")
+                if attempt == max_retries - 1:
+                    logger.error(f"Max retries reached for incident {alert['incident_number']}")
+                    raise
+                await asyncio.sleep(2 ** attempt)
+
+    except Exception as e:
+        logger.error(f"Acknowledgment task via MCP failed for incident {alert['incident_number']}: {str(e)}. Attempting direct PagerDuty API call.")
         try:
-            parsed_result = json.loads(cleaned_result)
-            return parsed_result
-        except json.JSONDecodeError as decode_error:
-            logger.error(f"❌ Failed to parse JSON from agent response: {decode_error} — Cleaned Result: {cleaned_result}")
-            return {"status": "error", "message": "Invalid JSON returned from agent"}
-    except Exception as e:
-        logger.error(f"Error in acknowledgment task for incident {alert['incident_number']}: {str(e)}")
-        return {"status": "error", "message": str(e)}
+            session = get_pagerduty_session()
+            incident = find_incident_by_number(session, alert["incident_number"])
+            if not incident:
+                logger.error(f"Incident {alert['incident_number']} not found via direct API")
+                return {"status": "error", "message": f"Incident {alert['incident_number']} not found"}
+            
+            result_payload = {
+                "incident_number": alert["incident_number"],
+                "status": incident["status"],
+                "acknowledgment": "skipped",
+                "related_alerts": []
+            }
+            if incident["status"] == "triggered":
+                session.rput(
+                    f"/incidents/{incident['id']}",
+                    json={"incident": {"type": "incident_reference", "status": "acknowledged"}},
+                    headers={"From": alert.get("from_email", "noramin@infopro.com.my")}
+                )
+                verified = find_incident_by_number(session, alert["incident_number"])
+                result_payload["acknowledgment"] = "success" if verified and verified["status"] == "acknowledged" else "failed"
+            logger.info(f"Direct API result for incident {alert['incident_number']}: {result_payload}")
+            return result_payload
+        except Exception as api_e:
+            logger.error(f"Direct PagerDuty API call also failed for incident {alert['incident_number']}: {str(api_e)}")
+            return {"status": "error", "message": str(api_e)}
+
 
 @retry()
-def run_alert_pipeline(alert: dict, mcp_tools: list):
-    """Run the alert pipeline, scheduling acknowledgment and escalation if needed."""
-    try:
-        incident_number = alert["incident_number"]
-        if incident_number in scheduled_escalations:
-            logger.info(f"Alert {incident_number} already scheduled for escalation, skipping")
-            return {"status": "skipped", "message": f"Alert {incident_number} already scheduled"}
-
-        occurred_at = datetime.fromisoformat(alert["timestamp"].replace("Z", "+00:00"))
-        now = datetime.now(timezone.utc)
-        delay_minutes = int(os.getenv("ESCALATION_DELAY_MINUTES", "25"))
-        delay = (occurred_at + timedelta(minutes=delay_minutes)) - now
-        seconds = max(0, delay.total_seconds())
-        logger.info(f"⏱ Holding alert {incident_number} for {int(seconds)} seconds before escalation decision")
-
-        # Schedule 5-minute acknowledgment check
-        asyncio.create_task(check_and_acknowledge_alert_task(alert, mcp_tools))
-
-        # Check if alert resolved within escalation delay
-        if check_resolution_status(alert, delay_minutes):
-            logger.info(f"✅ Alert with incident #{incident_number} resolved within {delay_minutes} minutes")
-            return {"status": "resolved", "message": f"Alert resolved within {delay_minutes} minutes, escalation canceled"}
-
-        # Schedule escalation pipeline
-        scheduled_escalations.add(incident_number)
-        Timer(seconds, run_escalation_pipeline, args=[alert, mcp_tools]).start()
-        return {
-            "status": "scheduled",
-            "message": f"Alert {incident_number} scheduled for evaluation in {int(seconds)} seconds",
-            "acknowledgment_scheduled": True
-        }
-
-    except Exception as e:
-        logger.error(f"Error in run_alert_pipeline for incident {alert['incident_number']}: {str(e)}")
-        return {"status": "error", "message": str(e)}
-
-@retry()
-def run_escalation_pipeline(alert: dict, mcp_tools: list):
+async def run_escalation_pipeline(alert: dict, mcp_tools: list):
     """Run the escalation pipeline, deciding whether to escalate and notify."""
     incident_number = alert["incident_number"]
     logger.info(f"⏰ Escalation pipeline triggered for incident {incident_number}")
     from msteamuat.tools.notify import send_notification
 
+    eligible = False
+    reason = ""
     try:
-        delay_minutes = int(os.getenv("ESCALATION_DELAY_MINUTES", "25"))
+        delay_minutes = int(os.getenv("ESCALATION_DELAY_MINUTES", "3"))
         if check_resolution_status(alert, delay_minutes):
             logger.info(f"✅ Alert with incident #{incident_number} resolved before escalation")
             scheduled_escalations.discard(incident_number)
-            return {"status": "resolved", "message": f"Alert resolved, escalation canceled"}
+            return {"status": "resolved", "message": "Alert resolved, escalation canceled"}
 
         agents = load_agents(mcp_tools)
         tasks_def = load_tasks()
@@ -248,21 +354,20 @@ def run_escalation_pipeline(alert: dict, mcp_tools: list):
         crew = Crew(
             agents=[escalation_agent, communicator_agent],
             tasks=[escalation_task, notification_task],
-            verbose=True
+            verbose=True,
+            telemetry=False
         )
 
         logger.info(f"🧠 Kicking off AI crew for escalation and notification of incident {incident_number}")
-        result = crew.kickoff()
-        comm_response = str(result.raw or "")
-        logger.info(f"🤖 Crew execution completed with result: {comm_response}")
+        result = await asyncio.to_thread(crew.kickoff)
+        
+        escalation_decision = result.lower()
+        logger.info(f"🤖 Escalation checker agent decided: '{escalation_decision}'")
+        
+        escalation_keywords = ["yes, escalate", "yes, escalate.", "escalate", "proceed", "yes"]
+        should_escalate_ai = any(keyword in escalation_decision for keyword in escalation_keywords)
 
-        escalation_keywords = ["yes", "escalate", "send", "notify", "proceed", "approved", "urgent", "critical"]
-        found_keywords = [kw for kw in escalation_keywords if kw in comm_response.lower()]
-        logger.info(f"🔍 Keywords found: {found_keywords}")
-
-        should_send_email = len(found_keywords) > 0
-
-        if should_send_email or eligible:
+        if eligible or should_escalate_ai:
             try:
                 send_notification(alert, reason)
                 logger.info(f"✅ Email sent to BAU for incident {incident_number}")
@@ -273,7 +378,7 @@ def run_escalation_pipeline(alert: dict, mcp_tools: list):
                 scheduled_escalations.discard(incident_number)
                 return {"status": "error", "message": f"Failed to send email: {str(email_error)}"}
         else:
-            logger.info(f"ℹ️ Escalation not approved for incident {incident_number} by AI and policy check failed")
+            logger.info(f"ℹ️ Escalation not approved for incident {incident_number} by AI ('{escalation_decision}') and policy check failed")
             scheduled_escalations.discard(incident_number)
             return {"status": "suppressed", "message": "Escalation not approved, no email sent"}
 
@@ -292,3 +397,71 @@ def run_escalation_pipeline(alert: dict, mcp_tools: list):
                 return {"status": "error", "message": f"Fallback email failed: {str(fallback_error)}"}
         scheduled_escalations.discard(incident_number)
         return {"status": "error", "message": f"Crew execution failed: {str(e)}"}
+
+async def _run_alert_pipeline_async(alert: dict, mcp_tools: list = None):
+    """The core async pipeline logic."""
+    mcp_tools = mcp_tools or get_mcp_tools()
+    try:
+        incident_number = alert["incident_number"]
+        if incident_number in scheduled_escalations:
+            logger.info(f"Alert {incident_number} already scheduled for escalation, skipping")
+            return
+
+        occurred_at = datetime.fromisoformat(alert["timestamp"].replace("Z", "+00:00"))
+        now = datetime.now(timezone.utc)
+        delay_minutes = int(os.getenv("ESCALATION_DELAY_MINUTES", "3"))
+        delay = (occurred_at + timedelta(minutes=delay_minutes)) - now
+        seconds = max(0, delay.total_seconds())
+        
+        logger.info(f"⏱ Holding alert {incident_number} for {int(seconds)} seconds before escalation decision")
+
+        if alert["status"] == "triggered":
+            asyncio.create_task(check_and_acknowledge_alert_task(alert, mcp_tools))
+            logger.info(f"⏳ Scheduled acknowledgment check for incident {incident_number}")
+        else:
+            logger.info(f"✅ Alert #{incident_number} is already resolved. Skipping acknowledgment scheduling.")
+
+        await asyncio.sleep(seconds)
+
+        if check_resolution_status(alert, delay_minutes):
+            logger.info(f"✅ Alert with incident #{incident_number} resolved within {delay_minutes} minutes")
+            return
+
+        scheduled_escalations.add(incident_number)
+        await run_escalation_pipeline(alert, mcp_tools)
+
+    except Exception as e:
+        logger.error(f"Error in _run_alert_pipeline_async for incident {alert.get('incident_number', 'N/A')}: {str(e)}")
+
+def _run_pipeline_in_background(alert: dict):
+    """Helper to run the async pipeline in a new event loop in a new thread."""
+    logger.info(f"Starting background processing for incident {alert.get('incident_number', 'N/A')}")
+    asyncio.run(_run_alert_pipeline_async(alert))
+
+def start_alert_pipeline(alert: dict):
+    """
+    Synchronous entry point to start the alert pipeline in a background thread.
+    This should be called from the webhook receiver.
+    """
+    thread = Thread(target=_run_pipeline_in_background, args=(alert,))
+    thread.daemon = True
+    thread.start()
+    logger.info(f"Webhook received. Handed off incident {alert.get('incident_number', 'N/A')} to background processor.")
+    return {"status": "processing_started"}
+
+# Track scheduled escalations to prevent duplicates
+scheduled_escalations = set()
+
+if __name__ == "__main__":
+    alert = {
+        "incident_number": "133",
+        "title": "Test Alert",
+        "severity": "critical",
+        "timestamp": "2025-07-16T19:02:06Z",
+        "metric": "Server Down",
+        "status": "triggered",
+        "from_email": "noramin@infopro.com.my"
+    }
+    print("Running pipeline directly for testing...")
+    asyncio.run(_run_alert_pipeline_async(alert))
+    print("Pipeline test run finished.")

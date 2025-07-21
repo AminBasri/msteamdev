@@ -128,7 +128,3 @@ check_and_acknowledge_alert:
     - acknowledgment_result: Result of the acknowledgment action (if performed).
     - related_alerts: List of related alerts for the service within the past 7 days.
   agent: pagerduty_manager
-  tools:
-    - mcp:GetIncidentStatus
-    - mcp:AcknowledgeIncident
-    - mcp:GetRelatedAlerts
