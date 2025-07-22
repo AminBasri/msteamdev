@@ -1,6 +1,7 @@
 import json
 from datetime import datetime, timedelta
 import logging
+from crewai.tools import tool
 
 LOG_FILE = "src/msteamuat/alert_log.json"
 ESCALATION_LOG_FILE = "src/msteamuat/escalation_log.json"
@@ -171,3 +172,31 @@ def check_escalation_eligibility(current_alert):
             f"- No matching triggered alerts found.\n"
             f"- Decision: Escalate."
         )
+
+@tool("GetMatchingAlerts")
+def get_matching_alerts(title: str, severity: str, hours: int = 24) -> list:
+    """
+    Get matching alerts from the log file within a specified time window.
+
+    Args:
+        title (str): The title of the alert to match.
+        severity (str): The severity of the alert to match.
+        hours (int): The number of hours to look back for matching alerts.
+
+    Returns:
+        list: A list of matching alerts.
+    """
+    alerts = _load_log()
+    matching_alerts = []
+    now = datetime.now()
+
+    for alert in alerts:
+        alert_time = datetime.fromisoformat(alert["timestamp"].replace("Z", "+00:00")).replace(tzinfo=None)
+        if (
+            alert["title"] == title and
+            alert["severity"] == severity and
+            now - alert_time < timedelta(hours=hours)
+        ):
+            matching_alerts.append(alert)
+
+    return matching_alerts

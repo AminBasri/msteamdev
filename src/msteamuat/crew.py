@@ -13,7 +13,7 @@ import re
 import requests
 from crewai import Agent, Task, Crew
 from msteamuat.llm import get_llm
-from msteamuat.tools.alert_store import check_escalation_eligibility, _load_log
+from msteamuat.tools.alert_store import check_escalation_eligibility, _load_log, get_matching_alerts
 from crewai.tools import tool
 from pdpyras import APISession
 
@@ -78,30 +78,12 @@ def acknowledge_incident(incident_number: str, from_email: str) -> str:
     except requests.RequestException as e:
         logger.error(f"AcknowledgeIncident tool failed: {e}")
         return f"Error calling MCP server: {e}"
-@tool("GetRelatedAlerts")
-def get_related_alerts(service_id: str, start_time: str, end_time: str) -> str:
-    """
-    Get related alerts for a PagerDuty service within a time range.
-    Input should be the service ID, start time (ISO 8601 format), and end time (ISO 8601 format).
-    """
-    jsonrpc_request = {
-        "jsonrpc": "2.0",
-        "method": "tools/call",
-        "params": {"name": "GetRelatedAlerts", "arguments": {"service_id": service_id, "start_time": start_time, "end_time": end_time}},
-        "id": "3"
-    }
-    try:
-        response = requests.post(MCP_SERVER_URL, json=jsonrpc_request, timeout=15)
-        response.raise_for_status()
-        return response.text
-    except requests.RequestException as e:
-        logger.error(f"GetRelatedAlerts tool failed: {e}")
-        return f"Error calling MCP server: {e}"
+
 
 def get_mcp_tools() -> list:
     """Load MCP tools."""
     logger.info("Loading MCP tools...")
-    mcp_tools = [get_incident_status, acknowledge_incident, get_related_alerts]
+    mcp_tools = [get_incident_status, acknowledge_incident, get_matching_alerts]
     logger.info("Successfully loaded MCP tools.")
     return mcp_tools
 

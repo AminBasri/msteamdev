@@ -52,6 +52,6 @@ pagerduty_manager:
   tools:
     - GetIncidentStatus
     - AcknowledgeIncident
-    - GetRelatedAlerts
+    - GetMatchingAlerts
   verbose: true
   allow_delegation: false

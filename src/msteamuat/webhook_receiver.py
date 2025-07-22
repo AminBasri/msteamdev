@@ -9,14 +9,7 @@ import re
 import logging
 from datetime import datetime
 from typing import List
-'''
-# ✅ MCP Import Check
-try:
-    import mcp
-    print("✅ MCP module available in FastAPI context")
-except ImportError:
-    print("❌ MCP module missing in FastAPI runtime")
-'''
+
 app = FastAPI(title="PagerDuty Webhook Receiver")
 LOG_PATH = "src/msteamuat/alert_log.json"
 
@@ -138,12 +131,12 @@ async def receive_alert(request: Request):
                 content={"status": "filtered", "message": f"Alert status '{status}' not in allowed list"},
                 status_code=200
             )
-
+        '''
         # Extract from_email with fallback
         from_email = data.get("from_email") or os.getenv("SENDER_EMAIL", "noramin@infopro.com.my")
         if not data.get("from_email"):
             webhook_logger.warning(f"Missing 'from_email' in alert data for incident {data.get('number', 'N/A')}. Using fallback email: {from_email}")
-
+        '''
         alert = {
             "severity": extract_severity_from_title(title),
             "metric": extract_metric_from_title(title),
@@ -152,7 +145,7 @@ async def receive_alert(request: Request):
             "incident_number": data.get("number", "unknown"),
             "title": title,
             "original_metric": title,
-            "from_email": from_email
+            #"from_email": from_email
         }
 
         webhook_logger.info(f"Processed alert: {json.dumps(alert, indent=2)}")

@@ -119,20 +119,7 @@ async def mcp_handler(request: Request):
                                 "json_schema_extra": {}
                             }
                         },
-                        {
-                            "name": "GetRelatedAlerts",
-                            "description": "Get related alerts for a PagerDuty service within a time range",
-                            "inputSchema": {
-                                "type": "object",
-                                "properties": {
-                                    "service_id": {"type": "string"},
-                                    "start_time": {"type": "string"},
-                                    "end_time": {"type": "string"}
-                                },
-                                "required": ["start_time", "end_time"],
-                                "json_schema_extra": {}
-                            }
-                        }
+                        
                     ]
                 }
             }
@@ -143,8 +130,6 @@ async def mcp_handler(request: Request):
                 return await call_get_incident_status(req_id, args)
             elif tool == "AcknowledgeIncident":
                 return await call_acknowledge_incident(req_id, args)
-            elif tool == "GetRelatedAlerts":
-                return await call_get_related_alerts(req_id, args)
             else:
                 return {
                     "jsonrpc": "2.0",
@@ -249,59 +234,7 @@ async def call_acknowledge_incident(req_id, args):
                 "error": {"code": -32603, "message": f"Failed to acknowledge incident: {str(e)}"}
             }
 
-async def call_get_related_alerts(req_id, args):
-    loop = asyncio.get_running_loop()
-    with ThreadPoolExecutor() as executor:
-        try:
-            def logic():
-                session = get_pagerduty_session()
-                try:
-                    start = datetime.fromisoformat(args["start_time"].replace("Z", "+00:00"))
-                    end = datetime.fromisoformat(args["end_time"].replace("Z", "+00:00"))
-                except ValueError as e:
-                    raise HTTPException(status_code=400, detail=f"Invalid date format: {str(e)}")
-                if (end - start).days > 7:
-                    raise HTTPException(status_code=400, detail="Max 7 days supported")
-                all_incidents = []
-                params = {
-                    "service_ids[]": args["service_id"],
-                    "since": args["start_time"],
-                    "until": args["end_time"],
-                    "limit": 100,
-                    "offset": 0
-                }
-                while True:
-                    response = session.get("/incidents", params=params)
-                    if response.status_code != 200:
-                        break
-                    items = response.json().get("incidents", [])
-                    all_incidents.extend(items)
-                    if len(items) < 100:
-                        break
-                    params["offset"] += 100
-                logger.info(f"Found {len(all_incidents)} incidents in range {args['start_time']} to {args['end_time']}")
-                return {
-                    "content": [{
-                        "text": json.dumps(all_incidents),
-                        "metadata": {
-                            "count": len(all_incidents),
-                            "range": f"{args['start_time']} to {args['end_time']}"
-                        }
-                    }]
-                }
-            result = await loop.run_in_executor(executor, logic)
-            return {
-                "jsonrpc": "2.0",
-                "id": req_id,
-                "result": result
-            }
-        except Exception as e:
-            logger.error(f"Failed to get related alerts: {str(e)}")
-            return {
-                "jsonrpc": "2.0",
-                "id": req_id,
-                "error": {"code": -32603, "message": f"Failed to get related alerts: {str(e)}"}
-            }
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=6006, log_level="info")
