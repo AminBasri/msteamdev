@@ -256,7 +256,7 @@ def send_notification(alert: Dict, reason: str) -> str:
         smtp_pass = os.getenv("SMTP_PASSWORD")
         recipients = [email.strip() for email in os.getenv("ALERT_EMAIL_RECIPIENTS", "").split(",") if email.strip()]
         sender_name = os.getenv("SENDER_NAME", "CrewAI Escalation Alert System")
-        sender_email = os.getenv("SENDER_EMAIL", smtp_user)
+        sender_email = os.getenv("REPORT_EMAIL", smtp_user)
 
         logger.info(f"SMTP Config - Host: {smtp_host}, Port: {smtp_port}, User: {smtp_user}")
         logger.info(f"Recipients: {len(recipients)} addresses")
