@@ -19,7 +19,7 @@ logger.propagate = False
 logger.handlers.clear()
 
 # Add FileHandler for mcp_server.log
-file_handler = logging.FileHandler('/home/crewai/msteamuat/mcp_server.log')
+file_handler = logging.FileHandler('/home/crewai/msteamuat/log/mcp_server.log')
 file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
 logger.addHandler(file_handler)
 

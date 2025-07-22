@@ -38,7 +38,7 @@ webhook_logger.setLevel(logging.INFO)
 # Prevent double logging to root logger (avoids duplication in crew.log)
 webhook_logger.propagate = False
 
-webhook_handler = logging.FileHandler("webhook_receiver.log")
+webhook_handler = logging.FileHandler("/home/crewai/msteamuat/log/webhook_receiver.log")
 webhook_handler.setLevel(logging.INFO)
 formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
 webhook_handler.setFormatter(formatter)
