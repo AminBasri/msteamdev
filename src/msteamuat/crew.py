@@ -138,6 +138,20 @@ def find_incident_by_number(session, incident_number: str):
         logger.error(f"Failed to fetch incidents: {str(e)}")
         raise
 
+def get_user_email_from_pagerduty(user_id: str) -> str | None:
+    """Fetches a user's email from PagerDuty API given their user ID."""
+    try:
+        session = get_pagerduty_session()
+        user = session.rget(f"/users/{user_id}")
+        if user and user.get("email"):
+            logger.info(f"Found email {user['email']} for user ID {user_id}")
+            return user["email"]
+        logger.warning(f"Email not found for user ID {user_id}")
+        return None
+    except Exception as e:
+        logger.error(f"Failed to fetch email for user ID {user_id}: {str(e)}")
+        return None
+
 def load_yaml(path):
     """Load YAML configuration file."""
     with open(path, "r") as f:
