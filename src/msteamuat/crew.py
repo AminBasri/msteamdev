@@ -359,15 +359,17 @@ async def run_escalation_pipeline(alert: dict, mcp_tools: list):
         )
 
         logger.info(f"🧠 Kicking off AI crew for escalation and notification of incident {incident_number}")
-        result = await asyncio.to_thread(crew.kickoff)
-        
-        escalation_decision = result.lower()
-        logger.info(f"🤖 Escalation checker agent decided: '{escalation_decision}'")
-        
-        escalation_keywords = ["yes, escalate", "yes, escalate.", "escalate", "proceed", "yes"]
-        should_escalate_ai = any(keyword in escalation_decision for keyword in escalation_keywords)
+        result = crew.kickoff()
+        comm_response = str(result.raw or "")
+        logger.info(f"🤖 Crew execution completed with result: {comm_response}")
 
-        if eligible or should_escalate_ai:
+        escalation_keywords = ["yes", "escalate", "send", "notify", "proceed", "approved", "urgent", "critical"]
+        found_keywords = [kw for kw in escalation_keywords if kw in comm_response.lower()]
+        logger.info(f"🔍 Keywords found: {found_keywords}")
+
+        should_send_email = len(found_keywords) > 0
+
+        if should_send_email or eligible:
             try:
                 send_notification(alert, reason)
                 logger.info(f"✅ Email sent to BAU for incident {incident_number}")
@@ -378,7 +380,7 @@ async def run_escalation_pipeline(alert: dict, mcp_tools: list):
                 scheduled_escalations.discard(incident_number)
                 return {"status": "error", "message": f"Failed to send email: {str(email_error)}"}
         else:
-            logger.info(f"ℹ️ Escalation not approved for incident {incident_number} by AI ('{escalation_decision}') and policy check failed")
+            logger.info(f"ℹ️ Escalation not approved for incident {incident_number} by AI and policy check failed")
             scheduled_escalations.discard(incident_number)
             return {"status": "suppressed", "message": "Escalation not approved, no email sent"}
 
