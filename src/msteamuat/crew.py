@@ -1,6 +1,7 @@
 # src/msteamuat/crew.py
 
 import os
+import sys
 import yaml
 from threading import Thread
 from datetime import datetime, timedelta, timezone
@@ -18,18 +19,41 @@ from crewai.tools import tool
 from pdpyras import APISession
 
 # Configure logging
+class Tee(object):
+    def __init__(self, *files):
+        self.files = files
+    def write(self, obj):
+        for f in self.files:
+            f.write(obj)
+            f.flush() # Ensure each write is flushed
+    def flush(self) :
+        for f in self.files:
+            f.flush()
+
+# Create a log directory if it doesn't exist
+log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'log')
+os.makedirs(log_dir, exist_ok=True)
+log_file_path = os.path.join(log_dir, 'crew.log')
+
+# Create a log file and Tee object
+log_file = open(log_file_path, 'a')
+original_stdout = sys.stdout
+original_stderr = sys.stderr
+sys.stdout = Tee(original_stdout, log_file)
+sys.stderr = Tee(original_stderr, log_file)
+
 logger = logging.getLogger('crew')
 logger.setLevel(logging.INFO)
 logger.propagate = False
 logger.handlers.clear()
 
 # Add FileHandler for crew.log
-file_handler = logging.FileHandler('/home/crewai/msteamuat/log/crew.log')
+file_handler = logging.FileHandler(log_file_path)
 file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
 logger.addHandler(file_handler)
 
 # Add StreamHandler for console output
-stream_handler = logging.StreamHandler()
+stream_handler = logging.StreamHandler(original_stdout)
 stream_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
 logger.addHandler(stream_handler)
 
@@ -37,7 +61,7 @@ MCP_SERVER_URL = os.getenv("MCP_SERVER_URL", "http://localhost:6006/mcp")
 from_email = os.getenv("SENDER_EMAIL", "noramin@infopro.com.my")
 
 
-# Correct Tool Implementation using direct HTTP requests
+# Tool Implementation using direct HTTP requests
 @tool("GetIncidentStatus")
 def get_incident_status(incident_number: str) -> str:
     """
