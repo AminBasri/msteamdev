@@ -45,77 +45,49 @@ notify_bau:
   agent: communicator
   output_pydantic: src.msteamuat.tools.notify.EmailContent
 
-compose_email:
-  description: >
-    Compose a professional email for alert escalation with details:
-    - Title: {title}
-    - Severity: {severity}
-    - Metric: {metric}
-    - Incident Number: {incident_number}
-    - Reason: {reason}
-  expected_output: >
-    A JSON object containing the email subject and body, formatted as:
-      {
-        "subject": "",
-        "body": ""
-      }
-  agent: communicator
-
 shift_report:
   description: >
-    Generate a professional end-of-shift report in email body by summarizing all alerts from {shift_start} to {shift_end}.
-    Summary statistics:
+    Generate a professional shift report email for the NOC team.
+
+    SHIFT INFORMATION:
+    - Shift period: {shift_start} to {shift_end} (+08)
+    - Shift type: {shift_type}
+
+    ALERT STATISTICS:
     - Total Alerts: {total_alerts}
     - Critical Alerts: {critical_alerts}
     - Warning Alerts: {warning_alerts}
     - Resolved Alerts: {resolved_alerts}
     - Escalated Alerts: {escalated_alerts}
-    
-    Alert Details:
+
+    ALERT DETAILS:
     {alert_details}
-    
-    If no alerts are recorded, explicitly state: "No alerts recorded for this shift."
 
-    The email must include both plain text and HTML versions. The HTML version should include:
-    - Proper styling with CSS (Arial font, responsive design)
-    - Tables for structured data with borders and padding
-    - Color coding for severity levels (critical: #ffcccc, warning: #fff4cc)
-    - Responsive design for mobile devices
-    
-    The report must follow this exact format:
-    Subject: Shift Report - {shift_start} to {shift_end} (+08)
-    Body:
-      Dear Team,
-
-      This is the shift report for {shift_start} to {shift_end} (+08).
-
-      Summary:
-      - Total Alerts: {total_alerts}
-      - Critical Alerts: {critical_alerts}
-      - Warning Alerts: {warning_alerts}
-      - Resolved Alerts: {resolved_alerts}
-      - Escalated Alerts: {escalated_alerts}
-
-      Alert Details:
-      {alert_details}
-
-      Please review any unresolved incidents and contact the managed service team for issues.
-
-      Signoff should be formatted as follows:
-      Best regards,
-      CrewAI Reporting System
-      Managed Service Team
-    
-    Ensure special characters (e.g., backslashes, newlines) are properly escaped and handled.
-    Ensure the alert details are formatted as a list with each alert on a new line, and make sure all fields are properly filled in.
-    Output a structured response with subject, body, and html_body fields matching this format.
+    REQUIREMENTS:
+    1. Create a professional email subject that includes the shift period and type
+    2. Write a comprehensive email body that includes:
+       - Professional greeting
+       - Shift period and type
+       - Summary statistics (total, critical, warning, resolved, escalated alerts)
+       - Detailed alert information in a clear, readable format
+       - Professional closing with instructions to review unresolved incidents
+       - Note to contact the managed service team for issues
+    3. Use proper line breaks (\n) for email formatting
+    4. Ensure have proper numbering or point with line breaks if using it
+    5. Keep the tone professional and informative
+    6. Signoff should be formatted as follows:
+        Best regards
+        CrewAI Shift Reporting System
+        Managed Service Team
   expected_output: >
-    A structured object containing the email subject, body, and html_body, formatted as:
-      subject: ""
-      body: ""
-      html_body: ""
+    A JSON object containing the email subject and body, formatted exactly as:
+      {
+        "subject": "<Your Subject Here>",
+        "body": "<Your Email Body Here>"
+      }
   agent: reporter
-  output_pydantic: src.msteamuat.tools.custom_tool.ShiftReportOutput
+  output_pydantic: src.msteamuat.models.ShiftReportOutput
+
 
 check_and_acknowledge_alert:
   description: >

@@ -11,7 +11,7 @@ from email.utils import formataddr
 from crewai import Agent, Task, Crew
 from msteamuat.crew import load_agents, load_yaml, check_resolution_status
 from msteamuat.tools.alert_store import check_escalation_eligibility
-from msteamuat.tools.custom_tool import ShiftReportOutput
+from msteamuat.models import ShiftReportOutput, AlertDetail
 from pydantic import BaseModel
 import pytz
 import re
@@ -115,7 +115,7 @@ def send_report_email(subject: str, body: str):
     smtp_password = os.getenv("SMTP_PASSWORD")
     recipients = [email.strip() for email in os.getenv("REPORT_EMAIL", "").split(",") if email.strip()]
     sender_name = os.getenv("SENDER_NAME", "CrewAI Reporting System")
-    sender_email = os.getenv("SENDER_EMAIL", smtp_username)
+    sender_email = os.getenv("REPORT_EMAIL", smtp_username)
 
     if not all([smtp_host, smtp_port, smtp_username, smtp_password, recipients]):
         logger.error("Missing SMTP configuration or recipients")
@@ -153,10 +153,12 @@ def send_report_email(subject: str, body: str):
     else:
         logger.warning("Failed to send shift report to Rocket.Chat webhook, but email was sent")
 
-def run(shift_type=None):
+def run(shift_type=None, shift_start=None, shift_end=None):
     """Run the shift report task to summarize and email alert activity."""
     now = datetime.now(LOCAL_TZ)
-    if shift_type is None:
+    if shift_type == "weekly":
+        pass
+    elif shift_type is None:
         if 7 <= now.hour < 16:
             shift_type = "morning"
         elif 13 <= now.hour < 22:
@@ -168,12 +170,12 @@ def run(shift_type=None):
     if shift_type == "morning":
         shift_start = now.replace(hour=7, minute=0, second=0, microsecond=0)
         shift_end = now.replace(hour=16, minute=0, second=0, microsecond=0)
-    else:  # evening shift
+    elif shift_type == "evening":  # evening shift
         shift_start = now.replace(hour=13, minute=0, second=0, microsecond=0)
         shift_end = now.replace(hour=22, minute=0, second=0, microsecond=0)
 
     # If current time is before shift_start, use previous day's window
-    if now < shift_start:
+    if shift_type != "weekly" and now < shift_start:
         shift_start -= timedelta(days=1)
         shift_end -= timedelta(days=1)
 
@@ -191,6 +193,11 @@ def run(shift_type=None):
         logger.error("Missing reporter agent")
         return
 
+    report_task_def = tasks_def.get("shift_report")
+    if not report_task_def:
+        logger.error("Missing shift_report task definition")
+        return
+
     # Prepare alert data for the agent
     delay_minutes = int(os.getenv("ESCALATION_DELAY_MINUTES", "25"))
     alert_summary = []
@@ -203,16 +210,16 @@ def run(shift_type=None):
         alert_timestamp_utc = datetime.fromisoformat(alert.get('timestamp', 'N/A').replace("Z", "+00:00")).replace(tzinfo=timezone.utc)
         alert_timestamp_local = alert_timestamp_utc.astimezone(LOCAL_TZ).strftime('%Y-%m-%d %H:%M:%S')
 
-        alert_summary.append({
-            "incident_number": alert.get('incident_number', 'N/A'),
-            "title": alert.get('title', 'Unknown'),
-            "severity": alert.get('severity', 'Unknown').upper(),
-            "metric": alert.get('metric', 'Unknown'),
-            "status": alert.get('status', 'Unknown'),
-            "timestamp": alert_timestamp_local,
-            "escalation_status": escalation_status,
-            "escalation_reason": reason if not was_resolved else 'Resolved within delay period'
-        })
+        alert_summary.append(AlertDetail(
+            incident_number=int(alert.get('incident_number', 0)),
+            title=alert.get('title', 'Unknown'),
+            severity=alert.get('severity', 'Unknown').upper(),
+            metric=alert.get('metric', 'Unknown'),
+            status=alert.get('status', 'Unknown'),
+            timestamp=alert_timestamp_local,
+            escalation_status=escalation_status,
+            escalation_reason=reason if not was_resolved else 'Resolved within delay period'
+        ))
 
     # Calculate counts for the agent
     alert_count = len(alerts)
@@ -227,42 +234,25 @@ def run(shift_type=None):
     shift_start_local = shift_start.astimezone(LOCAL_TZ).strftime('%Y-%m-%d %H:%M:%S')
     shift_end_local = shift_end.astimezone(LOCAL_TZ).strftime('%Y-%m-%d %H:%M:%S')
 
-    # Define the task for the reporter agent to generate the email subject and body
+    # Prepare the alert details string dynamically
+    # Convert Pydantic models to dictionaries for JSON serialization
+    alert_summary_dicts = [alert.model_dump() for alert in alert_summary]
+    alert_details_str = json.dumps(alert_summary_dicts, indent=2) if alert_summary_dicts else 'No alerts recorded during this shift.'
+
+    # Define the task for the reporter agent using the YAML template
     report_task = Task(
-        description=(
-            f"Generate a professional shift report email for the NOC team.\n\n"
-            f"SHIFT INFORMATION:\n"
-            f"- Shift period: {shift_start_local} to {shift_end_local} (+08)\n"
-            f"- Shift type: {shift_type.capitalize()}\n\n"
-            f"ALERT STATISTICS:\n"
-            f"- Total Alerts: {alert_count}\n"
-            f"- Critical Alerts: {critical_count}\n"
-            f"- Warning Alerts: {warning_count}\n"
-            f"- Resolved Alerts: {resolved_count}\n"
-            f"- Escalated Alerts: {escalated_count}\n\n"
-            f"ALERT DETAILS:\n"
-            f"{json.dumps(alert_summary, indent=2) if alert_summary else 'No alerts recorded during this shift.'}\n\n"
-            f"REQUIREMENTS:\n"
-            f"1. Create a professional email subject that includes the shift period and type\n"
-            f"2. Write a comprehensive email body that includes:\n"
-            f"   - Professional greeting\n"
-            f"   - Shift period and type\n"
-            f"   - Summary statistics (total, critical, warning, resolved, escalated alerts)\n"
-            f"   - Detailed alert information in a clear, readable format\n"
-            f"   - Professional closing with instructions to review unresolved incidents\n"
-            f"   - Note to contact the managed service team for issues\n"
-            f"3. Use proper line breaks (\\n) for email formatting\n"
-            f"4. Ensure have proper numbering or point with line breaks if using it\n"
-            f"5. Keep the tone professional and informative\n"
-            f"6. Signoff should be formatted as follows:\n"
-            f"    Best regards\n"
-            f"    CrewAI Shift Reporting System\n"
-            f"    Managed Service Team\n"
+        description=report_task_def["description"].format(
+            shift_start=shift_start_local,
+            shift_end=shift_end_local,
+            shift_type=shift_type.capitalize(),
+            total_alerts=alert_count,
+            critical_alerts=critical_count,
+            warning_alerts=warning_count,
+            resolved_alerts=resolved_count,
+            escalated_alerts=escalated_count,
+            alert_details=alert_details_str
         ),
-        expected_output=(
-            "A structured shift report with email subject and body formatted for NOC team communication"
-            "If alert details are have multiple lines, use \\n for line breaks"
-        ),
+        expected_output=report_task_def["expected_output"],
         agent=reporter_agent,
         output_pydantic=ShiftReportOutput
     )
@@ -377,10 +367,25 @@ def run(shift_type=None):
         logger.error(f"Report generation or notification failed: {e}")
         raise
 
+def run_weekly_report():
+    """Run the weekly report task."""
+    now = datetime.now(LOCAL_TZ)
+    # Go back to the last Monday
+    start_of_last_week = now - timedelta(days=now.weekday() + 7)
+    end_of_last_week = start_of_last_week + timedelta(days=6)
+
+    shift_start = start_of_last_week.replace(hour=0, minute=0, second=0, microsecond=0)
+    shift_end = end_of_last_week.replace(hour=23, minute=59, second=59, microsecond=0)
+
+    run(shift_type="weekly", shift_start=shift_start, shift_end=shift_end)
+
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("--shift", choices=["morning", "evening"], 
+    parser.add_argument("--shift", choices=["morning", "evening", "weekly"], 
                        help="Shift type to generate report for")
     args = parser.parse_args()
-    run(args.shift)
+    if args.shift == "weekly":
+        run_weekly_report()
+    else:
+        run(args.shift)

@@ -12,7 +12,7 @@ import pytz
 from datetime import datetime, timezone
 from crewai import Agent, Task, Crew
 from msteamuat.crew import load_agents, load_yaml
-from msteamuat.tools.custom_tool import RecommendedActions, EmailContent
+from msteamuat.models import RecommendedActions, EmailContent
 from functools import wraps
 import time
 
