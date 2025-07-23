@@ -50,13 +50,14 @@ def get_llm():
         "timeout": 30,
         "max_retries": 3
     }
-
+    '''
     # Load from config file (if exists)
     config_file = "src/msteamuat/config/llm.yaml"
     file_config = load_yaml(config_file)
-
+    '''
     # Merge configurations: environment variables override file, file overrides defaults
-    config = {**default_config, **file_config, **env_config}
+    #config = {**default_config, **file_config, **env_config}
+    config = {**env_config}
 
     # Validate configuration
     required_fields = ["model", "base_url", "temperature"]
