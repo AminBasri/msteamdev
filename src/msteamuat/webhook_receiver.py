@@ -220,3 +220,7 @@ async def update_config(request: Request):
             content={"status": "error", "message": f"Config update failed: {str(e)}"},
             status_code=400
         )
+
+@app.get("/health")
+async def health_check():
+    return JSONResponse(content={"status": "healthy","timestamp": datetime.utcnow().isoformat(), "version": "1.0.0"})  # 200 OK

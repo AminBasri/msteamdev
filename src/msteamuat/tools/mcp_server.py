@@ -234,6 +234,9 @@ async def call_acknowledge_incident(req_id, args):
                 "error": {"code": -32603, "message": f"Failed to acknowledge incident: {str(e)}"}
             }
 
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy", "timestamp": datetime.utcnow().isoformat(), "version": "1.0.0"}
 
 if __name__ == "__main__":
     import uvicorn
