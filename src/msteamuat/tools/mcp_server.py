@@ -199,6 +199,13 @@ async def call_acknowledge_incident(req_id, args):
                 incident = find_incident_by_number(session, args["incident_number"])
                 if not incident:
                     raise HTTPException(status_code=404, detail="Incident not found")
+                if incident["status"] == "resolved":
+                    logger.info(f"Incident {incident['incident_number']} is already resolved. No action taken.")
+                    return {
+                        "status": "already_resolved",
+                        "incident_number": incident['incident_number'],
+                        "message": "Incident is already resolved. No further action taken."
+                    }
                 if incident["status"] == "acknowledged":
                     logger.info(f"Incident {incident['incident_number']} already acknowledged")
                     return {
@@ -234,9 +241,6 @@ async def call_acknowledge_incident(req_id, args):
                 "error": {"code": -32603, "message": f"Failed to acknowledge incident: {str(e)}"}
             }
 
-@app.get("/health")
-async def health_check():
-    return {"status": "healthy", "timestamp": datetime.utcnow().isoformat(), "version": "1.0.0"}
 
 if __name__ == "__main__":
     import uvicorn

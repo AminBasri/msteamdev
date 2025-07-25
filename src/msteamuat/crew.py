@@ -297,7 +297,11 @@ async def check_and_acknowledge_alert_task(alert: dict, mcp_tools: list, max_ret
             if not incident:
                 logger.error(f"Incident {alert['incident_number']} not found via direct API")
                 return {"status": "error", "message": f"Incident {alert['incident_number']} not found"}
-            
+
+            if incident["status"] == "resolved":
+                logger.info(f"Direct API check: Incident {alert['incident_number']} is already resolved. No action taken.")
+                return {"status": "already_resolved", "message": "Incident is already resolved"}
+
             result_payload = {
                 "incident_number": alert["incident_number"],
                 "status": incident["status"],
