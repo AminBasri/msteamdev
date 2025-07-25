@@ -44,13 +44,28 @@ def get_pagerduty_session():
         raise HTTPException(status_code=500, detail="Missing PagerDuty API token")
     return APISession(token)  # Reverted to pdpyras.APISession
 
+from msteamuat.tools.redis_client import cache_get, cache_set
+
 def find_incident_by_number(session, incident_number: str):
-    logger.debug(f"Searching for incident number: {incident_number}")
+    """
+    Finds an incident by its number, using a cache to avoid redundant API calls.
+    """
+    cache_key = f"incident:{incident_number}"
+
+    # 1. Check cache first
+    cached_incident = cache_get(cache_key)
+    if cached_incident:
+        logger.info(f"Cache HIT for incident {incident_number}")
+        return cached_incident
+
+    # 2. If not in cache, fetch from API
+    logger.info(f"Cache MISS for incident {incident_number}. Fetching from PagerDuty API.")
     try:
         for incident in session.iter_all("incidents"):
-            logger.debug(f"Checking incident: {incident.get('incident_number')}")
             if str(incident.get("incident_number")) == str(incident_number):
                 logger.info(f"Found incident: {incident_number}")
+                # 3. Save to cache with a 5-minute TTL (300 seconds)
+                cache_set(cache_key, incident, ttl_seconds=300)
                 return incident
         logger.warning(f"Incident {incident_number} not found")
         return None
