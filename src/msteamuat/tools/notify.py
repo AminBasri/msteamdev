@@ -27,7 +27,7 @@ logger.propagate = False
 logger.handlers.clear()
 
 # Add FileHandler for notify.log
-file_handler = logging.FileHandler('/home/crewai/msteamuat/notify.log')
+file_handler = logging.FileHandler('/home/crewai/msteamuat/log/notify.log')
 file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
 logger.addHandler(file_handler)
 
@@ -256,7 +256,7 @@ def send_notification(alert: Dict, reason: str) -> str:
         smtp_pass = os.getenv("SMTP_PASSWORD")
         recipients = [email.strip() for email in os.getenv("ALERT_EMAIL_RECIPIENTS", "").split(",") if email.strip()]
         sender_name = os.getenv("SENDER_NAME", "CrewAI Escalation Alert System")
-        sender_email = os.getenv("REPORT_EMAIL", smtp_user)
+        sender_email = os.getenv("ALERT_EMAIL_RECIPIENTS", smtp_user)
 
         logger.info(f"SMTP Config - Host: {smtp_host}, Port: {smtp_port}, User: {smtp_user}")
         logger.info(f"Recipients: {len(recipients)} addresses")
