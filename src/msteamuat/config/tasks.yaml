@@ -47,21 +47,28 @@ notify_bau:
 
 shift_report:
   description: >
-    Generate a professional shift report email for the NOC team.
+    Generate a comprehensive shift report for the {shift_type} shift from {shift_start} to {shift_end}.
 
-    SHIFT INFORMATION:
-    - Shift period: {shift_start} to {shift_end} (+08)
-    - Shift type: {shift_type}
-
-    ALERT STATISTICS:
+    First, provide a high-level summary of the key metrics.
     - Total Alerts: {total_alerts}
     - Critical Alerts: {critical_alerts}
     - Warning Alerts: {warning_alerts}
     - Resolved Alerts: {resolved_alerts}
     - Escalated Alerts: {escalated_alerts}
 
-    ALERT DETAILS:
-    {alert_details}
+    Next, provide a detailed breakdown for each category. Structure the report with the following sections clearly separated:
+
+    1.  **Escalated Incidents:**
+        This section lists all incidents that were formally escalated to the next level. This is the most critical section.
+        {escalated_incidents_str}
+
+    2.  **Resolved Alerts:**
+        This section lists all alerts that were resolved during the shift period.
+        {resolved_alerts_str}
+
+    3.  **Currently Open Alerts:**
+        This section lists all alerts that are still active and unresolved at the end of the shift.
+        {open_alerts_str}
 
     REQUIREMENTS:
     1. Create a professional email subject that includes the shift period and type

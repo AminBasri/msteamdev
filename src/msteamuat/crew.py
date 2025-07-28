@@ -207,8 +207,11 @@ def load_tasks():
     """Load tasks from YAML."""
     return yaml.safe_load(open("src/msteamuat/config/tasks.yaml", "r"))
 
-def check_resolution_status(alert: dict, delay_minutes: int) -> bool:
-    """Check if an alert with the same incident number has resolved status within the delay period."""
+def check_resolution_status(alert: dict, delay_minutes: int) -> tuple[bool, str]:
+    """
+    Check if an alert with the same incident number has a resolved status within the delay period.
+    Returns a tuple containing a boolean and a reason string.
+    """
     alerts = _load_log()
     incident_number = alert.get("incident_number")
     current_time = datetime.fromisoformat(alert["timestamp"].replace("Z", "+00:00"))
@@ -216,11 +219,13 @@ def check_resolution_status(alert: dict, delay_minutes: int) -> bool:
 
     for logged_alert in alerts:
         alert_time = datetime.fromisoformat(logged_alert["timestamp"].replace("Z", "+00:00"))
-        if (logged_alert["incident_number"] == incident_number and
-            logged_alert["status"] == "resolved" and
+        if (logged_alert.get("incident_number") == incident_number and
+            logged_alert.get("status") == "resolved" and
             current_time <= alert_time <= cutoff_time):
-            return True
-    return False
+            return True, f"Resolved at {alert_time.strftime('%Y-%m-%d %H:%M:%S Z')} within the {delay_minutes}-minute delay period."
+    
+    return False, "Alert was not resolved within the configured delay period."
+
 
 async def check_and_acknowledge_alert_task(alert: dict, mcp_tools: list, max_retries=3):
     """Check incident status after delay and acknowledge if triggered."""

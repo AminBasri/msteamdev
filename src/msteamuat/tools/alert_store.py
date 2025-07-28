@@ -42,8 +42,7 @@ def _save_escalation_log(data):
     escalations = _load_escalation_log()
     if not any(
         e.get('incident_number') == data['incident_number'] and
-        e.get('timestamp') == data['timestamp'] and
-        e.get('escalated') == data['escalated']
+        e.get('timestamp') == data['timestamp']
         for e in escalations
     ):
         with open(ESCALATION_LOG_FILE, "a") as f:
@@ -124,17 +123,8 @@ def check_escalation_eligibility(current_alert):
         history_summary = "\n".join(history_lines)
 
         if span_days > threshold:
-            # Save escalation event
-            escalation_entry = {
-                "incident_number": current_alert["incident_number"],
-                "title": current_alert["title"],
-                "severity": current_alert["severity"],
-                "timestamp": current_alert["timestamp"],
-                "escalated": True
-            }
-            _save_log(current_alert)
-            _save_escalation_log(escalation_entry)
-            return True, (
+            # Save escalation event with the reason
+            reason_for_escalation = (
                 f"🔺 Escalation allowed:\n"
                 f"- Title: {current_alert['title']}\n"
                 f"- Severity: {current_alert['severity']}\n"
@@ -146,6 +136,17 @@ def check_escalation_eligibility(current_alert):
                 f"- Matching alert(s):\n{history_summary}\n"
                 f"- Decision: Escalate."
             )
+            escalation_entry = {
+                "incident_number": current_alert["incident_number"],
+                "title": current_alert["title"],
+                "severity": current_alert["severity"],
+                "timestamp": current_alert["timestamp"],
+                "escalated": True,
+                "reason": reason_for_escalation
+            }
+            _save_log(current_alert)
+            _save_escalation_log(escalation_entry)
+            return True, reason_for_escalation
         else:
             _save_log(current_alert)
             return False, (
