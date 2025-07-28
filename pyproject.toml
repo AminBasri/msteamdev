@@ -20,7 +20,8 @@ dependencies = [
     "pip",
     "setuptools",
     "wheel",
-    "mcpadapt"
+    "mcpadapt",
+    "redis"
 ]
 
 [project.scripts]

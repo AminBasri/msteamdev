@@ -44,7 +44,7 @@ def get_pagerduty_session():
         raise HTTPException(status_code=500, detail="Missing PagerDuty API token")
     return APISession(token)  # Reverted to pdpyras.APISession
 
-from msteamuat.tools.redis_client import cache_get, cache_set
+from msteamuat.tools.redis_client import cache_get, cache_set, cache_delete
 
 def find_incident_by_number(session, incident_number: str):
     """
@@ -232,6 +232,9 @@ async def call_acknowledge_incident(req_id, args):
                     json={"incident": {"type": "incident_reference", "status": "acknowledged"}},
                     headers={"From": email}
                 )
+                # Invalidate the cache after updating the incident
+                cache_delete(f"incident:{args['incident_number']}")
+
                 verified = find_incident_by_number(session, args["incident_number"])
                 if verified["status"] != "acknowledged":
                     raise HTTPException(status_code=500, detail="Failed to acknowledge")

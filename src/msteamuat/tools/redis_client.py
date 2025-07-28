@@ -49,3 +49,8 @@ def cache_get(key: str) -> dict | None:
         if cached_value:
             return json.loads(cached_value)
     return None
+
+def cache_delete(key: str):
+    """Deletes a key from the cache."""
+    if redis_client:
+        redis_client.delete(key)
