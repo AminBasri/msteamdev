@@ -37,7 +37,8 @@ def get_redis_client():
 
 redis_client = get_redis_client()
 
-def cache_set(key: str, value: dict, ttl_seconds: int = 300):
+# Cache utility functions for storing and retrieving data in Redis. 15 minutes TTL by default.
+def cache_set(key: str, value: dict, ttl_seconds: int = 900):
     """Saves a dictionary to the cache as JSON."""
     if redis_client:
         redis_client.set(key, json.dumps(value), ex=ttl_seconds)

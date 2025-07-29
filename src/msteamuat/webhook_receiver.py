@@ -133,7 +133,7 @@ async def receive_alert(request: Request):
             raise ValueError("Invalid timestamp format in 'occurred_at'")
 
         if not should_process_alert(status):
-            logging.info(f"Alert with status '{status}' filtered out. Allowed statuses: {ALLOWED_STATUSES}")
+            webhook_logger.info(f"Alert with status '{status}' filtered out. Allowed statuses: {ALLOWED_STATUSES}")
             return JSONResponse(
                 content={"status": "filtered", "message": f"Alert status '{status}' not in allowed list"},
                 status_code=200

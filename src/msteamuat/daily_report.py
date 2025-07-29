@@ -107,29 +107,6 @@ def load_alerts(start_time: datetime, end_time: datetime):
         logger.error(f"Failed to load alerts: {e}")
         return []
 
-def load_escalations(start_time: datetime, end_time: datetime):
-    """Load escalated incidents from the escalation log within the specified time window."""
-    escalation_log_path = "src/msteamuat/escalation_log.json"
-    if not os.path.exists(escalation_log_path):
-        logger.warning(f"Escalation log not found at {escalation_log_path}")
-        return []
-    try:
-        escalations = []
-        with open(escalation_log_path, "r") as f:
-            for line in f:
-                try:
-                    escalation = json.loads(line)
-                    # Ensure the timestamp is timezone-aware (UTC)
-                    escalation_time = datetime.fromisoformat(escalation["timestamp"].replace("Z", "+00:00")).replace(tzinfo=timezone.utc)
-                    if start_time <= escalation_time <= end_time:
-                        escalations.append(escalation)
-                except (json.JSONDecodeError, KeyError) as e:
-                    logger.error(f"Skipping malformed line in escalation log: {line.strip()} - Error: {e}")
-        return escalations
-    except Exception as e:
-        logger.error(f"Failed to load escalations: {e}")
-        return []
-
 def send_report_email(subject: str, body: str):
     """Send the shift report email and Rocket.Chat webhook message to the NOC team."""
     smtp_host = os.getenv("SMTP_HOST")
@@ -221,66 +198,46 @@ def run(shift_type=None, shift_start=None, shift_end=None):
         logger.error("Missing shift_report task definition")
         return
 
-    # Load escalations to ensure the report is based on the source of truth
-    escalations = load_escalations(shift_start_utc, shift_end_utc)
-    escalated_incident_numbers = {e.get('incident_number') for e in escalations if e.get('incident_number')}
-
-    # Categorize alerts and prepare details with reasons
-    resolved_alerts_summary = []
-    open_alerts_summary = []
+    # Prepare alert data for the agent
     delay_minutes = int(os.getenv("ESCALATION_DELAY_MINUTES", "25"))
-
+    alert_summary = []
     for alert in alerts:
-        is_resolved, resolution_reason = check_resolution_status(alert, delay_minutes)
+        eligible, reason = check_escalation_eligibility(alert)
+        was_resolved = check_resolution_status(alert, delay_minutes)
+        escalation_status = "Escalated" if eligible and not was_resolved else "Not Escalated"
         
-        detail = AlertDetail(
+        # Convert alert timestamp to local timezone
+        alert_timestamp_utc = datetime.fromisoformat(alert.get('timestamp', 'N/A').replace("Z", "+00:00")).replace(tzinfo=timezone.utc)
+        alert_timestamp_local = alert_timestamp_utc.astimezone(LOCAL_TZ).strftime('%Y-%m-%d %H:%M:%S')
+
+        alert_summary.append(AlertDetail(
             incident_number=int(alert.get('incident_number', 0)),
             title=alert.get('title', 'Unknown'),
             severity=alert.get('severity', 'Unknown').upper(),
             metric=alert.get('metric', 'Unknown'),
             status=alert.get('status', 'Unknown'),
-            timestamp=datetime.fromisoformat(alert.get('timestamp', 'N/A').replace("Z", "+00:00")).astimezone(LOCAL_TZ).strftime('%Y-%m-%d %H:%M:%S'),
-            escalation_status="N/A",
-            escalation_reason=resolution_reason if is_resolved else "Alert is still open."
-        )
-
-        if is_resolved:
-            resolved_alerts_summary.append(detail)
-        else:
-            open_alerts_summary.append(detail)
-
-    # Prepare a separate list for escalated incidents from the source of truth
-    escalated_incidents_summary = []
-    for e in escalations:
-        # Find the original alert to get its full details
-        original_alert = next((a for a in alerts if a.get('incident_number') == e.get('incident_number')), e)
-
-        escalated_incidents_summary.append(AlertDetail(
-            incident_number=int(e.get('incident_number', 0)),
-            title=e.get('title', 'Unknown'),
-            severity=e.get('severity', 'Unknown').upper(),
-            metric=original_alert.get('metric', 'Unknown'),
-            status="Escalated", # Explicitly state the status
-            timestamp=datetime.fromisoformat(e.get('timestamp', 'N/A').replace("Z", "+00:00")).astimezone(LOCAL_TZ).strftime('%Y-%m-%d %H:%M:%S'),
-            escalation_status="Confirmed",
-            escalation_reason=e.get('reason', 'Reason not logged.') # Use the logged reason
+            timestamp=alert_timestamp_local,
+            escalation_status=escalation_status,
+            escalation_reason=reason if not was_resolved else 'Resolved within delay period'
         ))
 
     # Calculate counts for the agent
     alert_count = len(alerts)
     critical_count = sum(1 for a in alerts if a.get("severity") == "critical")
     warning_count = sum(1 for a in alerts if a.get("severity") == "warning")
-    resolved_count = len(resolved_alerts_summary)
-    escalated_count = len(escalated_incidents_summary)
+    resolved_count = sum(1 for a in alerts if a.get("status") == "resolved")
+    escalated_count = sum(1 for a in alerts if 
+                         check_escalation_eligibility(a)[0] and 
+                         not check_resolution_status(a, delay_minutes))
 
     # Format shift period for the agent
     shift_start_local = shift_start.astimezone(LOCAL_TZ).strftime('%Y-%m-%d %H:%M:%S')
     shift_end_local = shift_end.astimezone(LOCAL_TZ).strftime('%Y-%m-%d %H:%M:%S')
 
-    # Prepare the details strings for each category
-    resolved_alerts_str = json.dumps([d.model_dump() for d in resolved_alerts_summary], indent=2) if resolved_alerts_summary else 'No alerts were resolved during this shift.'
-    open_alerts_str = json.dumps([d.model_dump() for d in open_alerts_summary], indent=2) if open_alerts_summary else 'No alerts are currently open.'
-    escalated_incidents_str = json.dumps([d.model_dump() for d in escalated_incidents_summary], indent=2) if escalated_incidents_summary else 'No incidents were escalated during this shift.'
+    # Prepare the alert details string dynamically
+    # Convert Pydantic models to dictionaries for JSON serialization
+    alert_summary_dicts = [alert.model_dump() for alert in alert_summary]
+    alert_details_str = json.dumps(alert_summary_dicts, indent=2) if alert_summary_dicts else 'No alerts recorded during this shift.'
 
     # Define the task for the reporter agent using the YAML template
     report_task = Task(
@@ -293,9 +250,7 @@ def run(shift_type=None, shift_start=None, shift_end=None):
             warning_alerts=warning_count,
             resolved_alerts=resolved_count,
             escalated_alerts=escalated_count,
-            resolved_alerts_str=resolved_alerts_str,
-            open_alerts_str=open_alerts_str,
-            escalated_incidents_str=escalated_incidents_str
+            alert_details=alert_details_str
         ),
         expected_output=report_task_def["expected_output"],
         agent=reporter_agent,
