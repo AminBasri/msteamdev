@@ -9,20 +9,14 @@ import re
 import logging
 from datetime import datetime
 from typing import List
-'''
-# ✅ MCP Import Check
-try:
-    import mcp
-    print("✅ MCP module available in FastAPI context")
-except ImportError:
-    print("❌ MCP module missing in FastAPI runtime")
-'''
+
+# FastAPI application for receiving PagerDuty webhooks
 app = FastAPI(title="PagerDuty Webhook Receiver")
 LOG_PATH = "src/msteamuat/alert_log.json"
 
 # Configuration flags for filtering
 FILTER_ENABLED = True
-ALLOWED_STATUSES = ["triggered"]
+ALLOWED_STATUSES = ["triggered","resolved"]
 
 # Configure logging
 logging.basicConfig(
