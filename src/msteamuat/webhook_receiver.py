@@ -22,7 +22,7 @@ LOG_PATH = "src/msteamuat/alert_log.json"
 
 # Configuration flags for filtering
 FILTER_ENABLED = True
-ALLOWED_STATUSES = ["triggered", "resolved"]
+ALLOWED_STATUSES = ["triggered"]
 
 # Configure logging
 logging.basicConfig(

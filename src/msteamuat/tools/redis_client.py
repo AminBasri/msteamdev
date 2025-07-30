@@ -37,21 +37,63 @@ def get_redis_client():
 
 redis_client = get_redis_client()
 
-# Cache utility functions for storing and retrieving data in Redis. 15 minutes TTL by default.
-def cache_set(key: str, value: dict, ttl_seconds: int = 900):
+def cache_set(key: str, value: dict, ttl_seconds: int = 300):
     """Saves a dictionary to the cache as JSON."""
     if redis_client:
-        redis_client.set(key, json.dumps(value), ex=ttl_seconds)
+        try:
+            redis_client.set(key, json.dumps(value), ex=ttl_seconds)
+            logger.debug(f"Cache SET: key='{key}', ttl={ttl_seconds}s")
+        except Exception as e:
+            logger.error(f"Error setting cache key '{key}': {e}")
 
 def cache_get(key: str) -> dict | None:
     """Retrieves a dictionary from the cache."""
     if redis_client:
-        cached_value = redis_client.get(key)
-        if cached_value:
-            return json.loads(cached_value)
+        try:
+            cached_value = redis_client.get(key)
+            if cached_value:
+                logger.debug(f"Cache GET: key='{key}' (HIT)")
+                return json.loads(cached_value)
+            else:
+                logger.debug(f"Cache GET: key='{key}' (MISS)")
+        except Exception as e:
+            logger.error(f"Error getting cache key '{key}': {e}")
     return None
 
 def cache_delete(key: str):
     """Deletes a key from the cache."""
     if redis_client:
-        redis_client.delete(key)
+        try:
+            redis_client.delete(key)
+            logger.debug(f"Cache DELETE: key='{key}'")
+        except Exception as e:
+            logger.error(f"Error deleting cache key '{key}': {e}")
+
+def cache_set_add(set_name: str, value: str):
+    """Adds a member to a Redis set."""
+    if redis_client:
+        try:
+            redis_client.sadd(set_name, value)
+            logger.debug(f"Redis SET ADD: set='{set_name}', member='{value}'")
+        except Exception as e:
+            logger.error(f"Error adding to Redis set '{set_name}': {e}")
+
+def cache_set_remove(set_name: str, value: str):
+    """Removes a member from a Redis set."""
+    if redis_client:
+        try:
+            redis_client.srem(set_name, value)
+            logger.debug(f"Redis SET REMOVE: set='{set_name}', member='{value}'")
+        except Exception as e:
+            logger.error(f"Error removing from Redis set '{set_name}': {e}")
+
+def cache_set_is_member(set_name: str, value: str) -> bool:
+    """Checks if a member exists in a Redis set."""
+    if redis_client:
+        try:
+            is_member = redis_client.sismember(set_name, value)
+            logger.debug(f"Redis SET IS_MEMBER: set='{set_name}', member='{value}', result={is_member}")
+            return is_member
+        except Exception as e:
+            logger.error(f"Error checking Redis set membership for '{set_name}': {e}")
+    return False

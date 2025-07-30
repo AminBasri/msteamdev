@@ -17,6 +17,7 @@ from msteamuat.llm import get_llm
 from msteamuat.tools.alert_store import check_escalation_eligibility, _load_log, get_matching_alerts
 from crewai.tools import tool
 from pdpyras import APISession
+from msteamuat.tools.redis_client import cache_set_add, cache_set_remove, cache_set_is_member
 
 # Configure logging
 class Tee(object):
@@ -336,7 +337,7 @@ async def run_escalation_pipeline(alert: dict, mcp_tools: list):
         delay_minutes = int(os.getenv("ESCALATION_DELAY_MINUTES", "3"))
         if check_resolution_status(alert, delay_minutes):
             logger.info(f"✅ Alert with incident #{incident_number} resolved before escalation")
-            scheduled_escalations.discard(incident_number)
+            cache_set_remove(ESCALATION_SET_NAME, incident_number)
             return {"status": "resolved", "message": "Alert resolved, escalation canceled"}
 
         agents = load_agents(mcp_tools)
@@ -346,7 +347,7 @@ async def run_escalation_pipeline(alert: dict, mcp_tools: list):
 
         if not escalation_agent or not communicator_agent:
             logger.error("Missing required agents")
-            scheduled_escalations.discard(incident_number)
+            cache_set_remove(ESCALATION_SET_NAME, incident_number)
             return {"status": "error", "message": "Missing required agents"}
 
         eligible, reason = check_escalation_eligibility(alert)
@@ -397,15 +398,15 @@ async def run_escalation_pipeline(alert: dict, mcp_tools: list):
             try:
                 send_notification(alert, reason)
                 logger.info(f"✅ Email sent to BAU for incident {incident_number}")
-                scheduled_escalations.discard(incident_number)
+                cache_set_remove(ESCALATION_SET_NAME, incident_number)
                 return {"status": "escalated", "message": "Email sent to BAU successfully"}
             except Exception as email_error:
                 logger.error(f"❌ Failed to send email for incident {incident_number}: {email_error}")
-                scheduled_escalations.discard(incident_number)
+                cache_set_remove(ESCALATION_SET_NAME, incident_number)
                 return {"status": "error", "message": f"Failed to send email: {str(email_error)}"}
         else:
             logger.info(f"ℹ️ Escalation not approved for incident {incident_number} by AI and policy check failed")
-            scheduled_escalations.discard(incident_number)
+            cache_set_remove(ESCALATION_SET_NAME, incident_number)
             return {"status": "suppressed", "message": "Escalation not approved, no email sent"}
 
     except Exception as e:
@@ -415,21 +416,22 @@ async def run_escalation_pipeline(alert: dict, mcp_tools: list):
             try:
                 send_notification(alert, f"Crew execution failed but policy indicates escalation: {reason}")
                 logger.info(f"✅ Fallback email sent for incident {incident_number}")
-                scheduled_escalations.discard(incident_number)
+                cache_set_remove(ESCALATION_SET_NAME, incident_number)
                 return {"status": "escalated", "message": "Fallback email sent successfully"}
             except Exception as fallback_error:
                 logger.error(f"❌ Fallback email failed for incident {incident_number}: {fallback_error}")
-                scheduled_escalations.discard(incident_number)
+                cache_set_remove(ESCALATION_SET_NAME, incident_number)
                 return {"status": "error", "message": f"Fallback email failed: {str(fallback_error)}"}
-        scheduled_escalations.discard(incident_number)
+        cache_set_remove(ESCALATION_SET_NAME, incident_number)
         return {"status": "error", "message": f"Crew execution failed: {str(e)}"}
 
 async def _run_alert_pipeline_async(alert: dict, mcp_tools: list = None):
     """The core async pipeline logic."""
+    start_time = time.time() # Start timing
     mcp_tools = mcp_tools or get_mcp_tools()
     try:
         incident_number = alert["incident_number"]
-        if incident_number in scheduled_escalations:
+        if cache_set_is_member(ESCALATION_SET_NAME, incident_number):
             logger.info(f"Alert {incident_number} already scheduled for escalation, skipping")
             return
 
@@ -453,11 +455,15 @@ async def _run_alert_pipeline_async(alert: dict, mcp_tools: list = None):
             logger.info(f"✅ Alert with incident #{incident_number} resolved within {delay_minutes} minutes")
             return
 
-        scheduled_escalations.add(incident_number)
+        cache_set_add(ESCALATION_SET_NAME, incident_number)
         await run_escalation_pipeline(alert, mcp_tools)
 
     except Exception as e:
         logger.error(f"Error in _run_alert_pipeline_async for incident {alert.get('incident_number', 'N/A')}: {str(e)}")
+    finally:
+        end_time = time.time()
+        duration = end_time - start_time
+        logger.info(f"CrewAI pipeline for incident {alert.get('incident_number', 'N/A')} finished in {duration:.2f} seconds.")
 
 def _run_pipeline_in_background(alert: dict):
     """Helper to run the async pipeline in a new event loop in a new thread."""
@@ -476,7 +482,7 @@ def start_alert_pipeline(alert: dict):
     return {"status": "processing_started"}
 
 # Track scheduled escalations to prevent duplicates
-scheduled_escalations = set()
+ESCALATION_SET_NAME = "scheduled_escalations"
 
 if __name__ == "__main__":
     alert = {

@@ -21,7 +21,9 @@ dependencies = [
     "setuptools",
     "wheel",
     "mcpadapt",
-    "redis"
+    "redis",
+    "pandas",
+    "plotly"
 ]
 
 [project.scripts]
