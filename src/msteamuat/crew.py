@@ -12,12 +12,19 @@ import asyncio
 import json
 import re
 import requests
+import openlit
 from crewai import Agent, Task, Crew
 from msteamuat.llm import get_llm
-from msteamuat.tools.alert_store import check_escalation_eligibility, _load_log, get_matching_alerts
+from crewai import Agent, Task, Crew, Process
+from crewai_tools import MCPServerAdapter
+from mcp import StdioServerParameters
+from msteamuat.llm import get_llm
+from msteamuat.tools.alert_store import check_escalation_eligibility, _load_log
 from crewai.tools import tool
 from pdpyras import APISession
 from msteamuat.tools.redis_client import cache_set_add, cache_set_remove, cache_set_is_member
+
+openlit.init()
 
 # Configure logging
 class Tee(object):
@@ -108,7 +115,19 @@ def acknowledge_incident(incident_number: str, from_email: str) -> str:
 def get_mcp_tools() -> list:
     """Load MCP tools."""
     logger.info("Loading MCP tools...")
-    mcp_tools = [get_incident_status, acknowledge_incident, get_matching_alerts]
+    mcp_tools = [get_incident_status, acknowledge_incident]
+
+    # Configure StdioServerParameters for the internal MCP server
+    stdio_server_params = StdioServerParameters(
+        command=sys.executable,
+        args=[os.path.join(os.path.dirname(os.path.abspath(__file__)), "tools", "mcp_stdio_server.py")],
+        env=os.environ.copy() # Pass current environment variables
+    )
+
+    # Use MCPServerAdapter to get tools from the Stdio MCP server
+    with MCPServerAdapter(stdio_server_params) as stdio_tools:
+        mcp_tools.extend(stdio_tools)
+
     logger.info("Successfully loaded MCP tools.")
     return mcp_tools
 
@@ -192,6 +211,9 @@ def load_agents(mcp_tools=None):
         if name == "pagerduty_manager" and mcp_tools:
             tools = mcp_tools
             logger.info("Assigned MCP tools to pagerduty_manager")
+        if name == "escalation_checker" and mcp_tools:
+            tools.extend([tool for tool in mcp_tools if tool.name in ["ReadAlertLog", "ReadEscalationLog", "GetMatchingAlerts"]])
+            logger.info("Assigned MCP tools to escalation_checker")
 
         agents[name] = Agent(
             role=cfg["role"],
@@ -353,13 +375,17 @@ async def run_escalation_pipeline(alert: dict, mcp_tools: list):
         eligible, reason = check_escalation_eligibility(alert)
         logger.info(f"🧪 Policy check for incident {incident_number}: {eligible}, Reason: {reason}")
 
+        alert_history = _load_log()
+
         context = (
             f"Alert Title: {alert['title']}\n"
             f"Severity: {alert['severity']}\n"
             f"Occurred At: {alert['timestamp']}\n"
             f"Metric: {alert['metric']}\n"
             f"Incident #: {incident_number}\n\n"
-            f"Policy Result: {eligible} - {reason}\n"
+            f"Policy Result: {eligible} - {reason}\n\n"
+            f"Full Alert History: {json.dumps(alert_history)}\n\n"
+            f"You must verify the policy's output against the raw logs and the escalation history. Use the ReadEscalationLog tool to check past escalations. If the policy output is correct, use it to make your decision. If it is incorrect, override it and make the correct decision based on your own analysis of the alert history and escalation history.\n\n"
             f"Should this alert be escalated to BAU?"
         )
 
@@ -486,10 +512,10 @@ ESCALATION_SET_NAME = "scheduled_escalations"
 
 if __name__ == "__main__":
     alert = {
-        "incident_number": "133",
+        "incident_number": "189",
         "title": "Test Alert",
         "severity": "critical",
-        "timestamp": "2025-07-16T19:02:06Z",
+        "timestamp": "2025-07-30T00:02:06Z",
         "metric": "Server Down",
         "status": "triggered",
         "from_email": "noramin@infopro.com.my"

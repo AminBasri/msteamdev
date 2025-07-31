@@ -1,10 +1,33 @@
 import json
 from datetime import datetime, timedelta
 import logging
+import os
 from crewai.tools import tool
 
 LOG_FILE = "src/msteamuat/alert_log.json"
 ESCALATION_LOG_FILE = "src/msteamuat/escalation_log.json"
+
+@tool("ReadAlertLog")
+def read_alert_log() -> str:
+    """
+    Read the entire alert log and return it as a string.
+    """
+    try:
+        with open(LOG_FILE, "r") as f:
+            return f.read()
+    except FileNotFoundError:
+        return "Alert log not found."
+
+@tool("ReadEscalationLog")
+def read_escalation_log() -> str:
+    """
+    Read the entire escalation log and return it as a string.
+    """
+    try:
+        with open(ESCALATION_LOG_FILE, "r") as f:
+            return f.read()
+    except FileNotFoundError:
+        return "Escalation log not found."
 
 def _load_log():
     """Load alerts from alert_log.json."""

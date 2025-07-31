@@ -93,10 +93,8 @@ check_and_acknowledge_alert:
   description: >
     Check the status of PagerDuty incident {incident_number} 5 minutes after receipt using the MCP GetIncidentStatus tool.
     If the status is 'triggered', acknowledge the incident using the MCP AcknowledgeIncident tool.
-    Retrieve related alerts for context using the GetMatchingAlerts tool to inform escalation decisions.
   expected_output: >
     A JSON object containing:
     - status: The current status of the incident ('triggered', 'acknowledged', 'resolved', or 'error').
     - acknowledgment_result: Result of the acknowledgment action (if performed).
-    - related_alerts: List of related alerts for the service within the past 24 hour.
   agent: pagerduty_manager

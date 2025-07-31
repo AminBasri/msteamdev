@@ -10,7 +10,7 @@ action_recommender:
     An expert in IT operations with deep knowledge of system metrics and incident response.
   #llm: ollama/mixtral:latest
   verbose: true
-  allow_delegation: false
+  allow_delegation: true
 
 escalation_checker:
   role: Escalation Decision Agent
@@ -19,9 +19,13 @@ escalation_checker:
   backstory: >
     You are responsible for interpreting NOC escalation policies, such as suppression windows and severity thresholds.
     Use provided context and reason to make the final call.
+  tools:
+    - ReadAlertLog
+    - ReadEscalationLog
+    - GetMatchingAlerts
   #llm: ollama/mixtral:latest
   verbose: true
-  allow_delegation: false
+  allow_delegation: true
 
 communicator:
   role: Communication Agent
@@ -31,7 +35,7 @@ communicator:
     You ensure the right people are notified when thresholds are breached and expert in crafting clear, structured, and urgent alert notifications.
   #llm: ollama/mixtral:latest
   verbose: true
-  allow_delegation: false
+  allow_delegation: true
 
 reporter:
   role: Shift Reporter Agent
@@ -41,17 +45,16 @@ reporter:
     You compile alert history into a shift-end summary.
   #llm: ollama/mixtral:latest
   verbose: true
-  allow_delegation: false
+  allow_delegation: true
 
 pagerduty_manager:
   role: PagerDuty Manager Agent
   goal: >
-    Manage PagerDuty alerts by checking statuses, acknowledging unresolved alerts, and retrieving related alert context using MCP server tools.
+    Manage PagerDuty alerts by checking statuses and acknowledging unresolved alerts context using MCP server tools.
   backstory: >
     Expert in PagerDuty API interactions and alert lifecycle management, leveraging MCP servers for real-time data and actions.
   tools:
     - GetIncidentStatus
     - AcknowledgeIncident
-    - GetMatchingAlerts
   verbose: true
-  allow_delegation: false
+  allow_delegation: true

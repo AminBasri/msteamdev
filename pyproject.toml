@@ -23,7 +23,8 @@ dependencies = [
     "mcpadapt",
     "redis",
     "pandas",
-    "plotly"
+    "plotly",
+    "openlit"
 ]
 
 [project.scripts]
