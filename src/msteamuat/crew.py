@@ -422,7 +422,9 @@ async def run_escalation_pipeline(alert: dict, mcp_tools: list):
 
         if should_send_email or eligible:
             try:
-                send_notification(alert, reason)
+                # If the AI decided to escalate, use its reasoning. Otherwise, use the policy reason.
+                final_reason = comm_response if should_send_email else reason
+                send_notification(alert, final_reason)
                 logger.info(f"✅ Email sent to BAU for incident {incident_number}")
                 cache_set_remove(ESCALATION_SET_NAME, incident_number)
                 return {"status": "escalated", "message": "Email sent to BAU successfully"}
