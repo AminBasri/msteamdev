@@ -72,6 +72,15 @@ def main():
                     },
                     "id": request_id
                 }
+            elif tool_name == "notifications/initialized":
+                mcp_logger.info("Received notifications/initialized request.")
+                response = {
+                    "jsonrpc": "2.0",
+                    "result": {
+                        "message": "Initialization complete."
+                    },
+                    "id": request_id
+                }
             elif tool_name == "tools/list":
                 response = {
                     "jsonrpc": "2.0",

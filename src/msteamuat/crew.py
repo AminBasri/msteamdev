@@ -18,12 +18,19 @@ from msteamuat.llm import get_llm
 from crewai import Agent, Task, Crew, Process
 from crewai_tools import MCPServerAdapter
 from mcp import StdioServerParameters
-from msteamuat.llm import get_llm
 from msteamuat.tools.alert_store import check_escalation_eligibility, _load_log
 from crewai.tools import tool
 from pdpyras import APISession
 from msteamuat.tools.redis_client import cache_set_add, cache_set_remove, cache_set_is_member
 
+'''
+openlit.init(
+  otlp_endpoint="http://10.10.6.180:8200", 
+  otlp_headers="Authorization=Bearer%20synergiprod002" 
+)
+'''
+
+# Initialize OpenLit for telemetry
 openlit.init()
 
 # Configure logging
@@ -33,8 +40,8 @@ class Tee(object):
     def write(self, obj):
         for f in self.files:
             f.write(obj)
-            f.flush() # Ensure each write is flushed
-    def flush(self) :
+            f.flush()  # Ensure each write is flushed
+    def flush(self):
         for f in self.files:
             f.flush()
 
@@ -67,7 +74,6 @@ logger.addHandler(stream_handler)
 
 MCP_SERVER_URL = os.getenv("MCP_SERVER_URL", "http://localhost:6006/mcp")
 from_email = os.getenv("SENDER_EMAIL", "noramin@infopro.com.my")
-
 
 # Tool Implementation using direct HTTP requests
 @tool("GetIncidentStatus")
@@ -111,7 +117,6 @@ def acknowledge_incident(incident_number: str, from_email: str) -> str:
         logger.error(f"AcknowledgeIncident tool failed: {e}")
         return f"Error calling MCP server: {e}"
 
-
 def get_mcp_tools() -> list:
     """Load MCP tools."""
     logger.info("Loading MCP tools...")
@@ -121,7 +126,7 @@ def get_mcp_tools() -> list:
     stdio_server_params = StdioServerParameters(
         command=sys.executable,
         args=[os.path.join(os.path.dirname(os.path.abspath(__file__)), "tools", "mcp_stdio_server.py")],
-        env=os.environ.copy() # Pass current environment variables
+        env=os.environ.copy()  # Pass current environment variables
     )
 
     # Use MCPServerAdapter to get tools from the Stdio MCP server
@@ -282,25 +287,26 @@ async def check_and_acknowledge_alert_task(alert: dict, mcp_tools: list, max_ret
 
         for attempt in range(max_retries):
             try:
-                result = await asyncio.to_thread(pagerduty_manager.execute_task, acknowledge_task)
+                with openlit.start_trace(name=f"Acknowledge_Incident_{alert['incident_number']}") as trace:
+                    result = await asyncio.to_thread(pagerduty_manager.execute_task, acknowledge_task)
+                    trace.set_metadata({
+                        "incident_number": alert["incident_number"],
+                        "agent": "pagerduty_manager"
+                    })
                 
                 logger.debug(f"Task output for incident {alert['incident_number']}: {result}")
                 logger.info(f"Raw acknowledgment task result for incident {alert['incident_number']}: {result}")
-                
-                # The result is expected to be a string, not JSON.
-                # We return it directly if it's a string, otherwise, we log an error.
+
                 if isinstance(result, str):
-                    # Attempt to find a JSON object within the string, if not, handle as plain text
                     try:
                         json_match = re.search(r'\{.*\}', result, re.DOTALL)
                         if json_match:
                             parsed_result = json.loads(json_match.group(0))
                             return parsed_result
                         else:
-                            # If no JSON, return the raw string in a structured dict
                             return {"status": "success", "message": result}
                     except json.JSONDecodeError:
-                        return {"status": "success", "message": result} # Return raw string if not JSON
+                        return {"status": "success", "message": result}
                 else:
                     logger.error(f"Task output is not a string for incident {alert['incident_number']}: {result}")
                     return {"status": "error", "message": "Task output is not a string", "raw_response": result}
@@ -344,7 +350,6 @@ async def check_and_acknowledge_alert_task(alert: dict, mcp_tools: list, max_ret
         except Exception as api_e:
             logger.error(f"Direct PagerDuty API call also failed for incident {alert['incident_number']}: {str(api_e)}")
             return {"status": "error", "message": str(api_e)}
-
 
 @retry()
 async def run_escalation_pipeline(alert: dict, mcp_tools: list):
@@ -410,7 +415,13 @@ async def run_escalation_pipeline(alert: dict, mcp_tools: list):
         )
 
         logger.info(f"🧠 Kicking off AI crew for escalation and notification of incident {incident_number}")
-        result = crew.kickoff()
+        with openlit.start_trace(name=f"Escalation_Pipeline_{incident_number}") as trace:
+            result = crew.kickoff()
+            trace.set_metadata({
+                "incident_number": incident_number,
+                "agents": ["escalation_checker", "communicator"]
+            })
+
         comm_response = str(result.raw or "")
         logger.info(f"🤖 Crew execution completed with result: {comm_response}")
 
@@ -422,7 +433,6 @@ async def run_escalation_pipeline(alert: dict, mcp_tools: list):
 
         if should_send_email or eligible:
             try:
-                # If the AI decided to escalate, use its reasoning. Otherwise, use the policy reason.
                 final_reason = comm_response if should_send_email else reason
                 send_notification(alert, final_reason)
                 logger.info(f"✅ Email sent to BAU for incident {incident_number}")
@@ -455,7 +465,7 @@ async def run_escalation_pipeline(alert: dict, mcp_tools: list):
 
 async def _run_alert_pipeline_async(alert: dict, mcp_tools: list = None):
     """The core async pipeline logic."""
-    start_time = time.time() # Start timing
+    start_time = time.time()
     mcp_tools = mcp_tools or get_mcp_tools()
     try:
         incident_number = alert["incident_number"]

@@ -15,6 +15,9 @@ from msteamuat.crew import load_agents, load_yaml
 from msteamuat.models import RecommendedActions, EmailContent
 from functools import wraps
 import time
+import openlit
+
+openlit.init()
 
 # Create a named logger for this module
 logger = logging.getLogger('notify')
@@ -128,6 +131,7 @@ def send_rocketchat_webhook_message(message: str) -> bool:
 def generate_recommended_actions(alert: Dict) -> RecommendedActions:
     """Generate context-specific recommended actions using CrewAI."""
     try:
+        incident_number = alert.get('incident_number', 'N/A')
         agents = load_agents()
         tasks_def = load_yaml("src/msteamuat/config/tasks.yaml")
         action_recommender = agents.get("action_recommender")
@@ -144,17 +148,22 @@ def generate_recommended_actions(alert: Dict) -> RecommendedActions:
                 title=alert.get('title', 'Unknown'),
                 severity=alert.get('severity', 'Unknown').upper(),
                 metric=alert.get('metric', 'Unknown'),
-                incident_number=alert.get('incident_number', 'N/A')
+                incident_number=incident_number
             ),
             expected_output=tasks_def["recommend_actions"]["expected_output"],
             agent=action_recommender,
             output_pydantic=RecommendedActions
         )
         crew = Crew(agents=[action_recommender], tasks=[task], verbose=True)
-        result = crew.kickoff()
+        with openlit.start_trace(name=f"Recommended_Actions_{incident_number}") as trace:
+            result = crew.kickoff()
+            trace.set_metadata({
+                "incident_number": incident_number,
+                "agent": "action_recommender"
+            })
         return result.tasks_output[0].pydantic
     except Exception as e:
-        logger.error(f"Failed to generate recommended actions: {e}")
+        logger.error(f"Failed to generate recommended actions for incident {alert.get('incident_number', 'N/A')}: {e}")
         return RecommendedActions(actions=[
             f"Investigate {alert.get('metric', 'system')} usage",
             "Check running processes and services",
@@ -165,6 +174,7 @@ def generate_recommended_actions(alert: Dict) -> RecommendedActions:
 def generate_email_content(alert: Dict, reason: str) -> Tuple[str, str]:
     """Generate email subject and body using structured output."""
     try:
+        incident_number = alert.get('incident_number', 'N/A')
         # Generate recommended actions first
         recommended_actions = generate_recommended_actions(alert)
         actions_text = recommended_actions.format_for_email()
@@ -181,7 +191,7 @@ def generate_email_content(alert: Dict, reason: str) -> Tuple[str, str]:
                 title=alert.get('title', 'Unknown'),
                 severity=alert.get('severity', 'Unknown').upper(),
                 metric=alert.get('metric', 'Unknown'),
-                incident_number=alert.get('incident_number', 'N/A'),
+                incident_number=incident_number,
                 reason=reason,
                 recommended_actions=actions_text
             ),
@@ -190,7 +200,12 @@ def generate_email_content(alert: Dict, reason: str) -> Tuple[str, str]:
             output_pydantic=EmailContent
         )
         crew = Crew(agents=[communicator_agent], tasks=[task], verbose=True)
-        result = crew.kickoff()
+        with openlit.start_trace(name=f"Email_Content_{incident_number}") as trace:
+            result = crew.kickoff()
+            trace.set_metadata({
+                "incident_number": incident_number,
+                "agent": "communicator"
+            })
         
         # Access structured output directly
         if result.pydantic:
@@ -201,7 +216,7 @@ def generate_email_content(alert: Dict, reason: str) -> Tuple[str, str]:
             return format_alert_email(alert, reason, actions_text)
             
     except Exception as e:
-        logger.error(f"Failed to generate email content: {e}")
+        logger.error(f"Failed to generate email content for incident {alert.get('incident_number', 'N/A')}: {e}")
         return format_alert_email(alert, reason, actions_text)
 
 def format_alert_email(alert: Dict, reason: str, recommended_actions: str) -> tuple[str, str]:

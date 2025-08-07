@@ -24,7 +24,8 @@ dependencies = [
     "redis",
     "pandas",
     "plotly",
-    "openlit"
+    "openlit",
+    "opik"
 ]
 
 [project.scripts]

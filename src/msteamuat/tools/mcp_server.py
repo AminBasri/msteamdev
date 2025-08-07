@@ -32,11 +32,6 @@ class IncidentRequest(BaseModel):
     incident_number: str
     from_email: str = os.getenv("SENDER_EMAIL", "noramin@infopro.com.my")
 
-class RelatedAlertsRequest(BaseModel):
-    service_id: str = os.getenv("PAGERDUTY_SERVICE_ID", "PIU29W4")
-    start_time: str
-    end_time: str
-
 def get_pagerduty_session():
     token = os.getenv("PAGERDUTY_API_TOKEN")
     if not token:
