@@ -226,7 +226,9 @@ def load_agents(mcp_tools=None):
             backstory=cfg["backstory"],
             verbose=True,
             llm=llm,
-            tools=tools
+            tools=tools,
+            allow_delegation=cfg.get("allow_delegation", True),
+            reasoning=cfg.get("reasoning", True),
         )
     logger.debug(f"Loaded agents: {list(agents.keys())}")
     return agents
