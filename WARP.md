@@ -186,6 +186,11 @@ The system uses file-based JSON storage:
 - `Event loop is closed` errors → Redis client issues in test environment, restart test session
 - JSON decode errors in tests → Tools return error strings when underlying services unavailable
 
+**Production Issues**
+- `Event loop is closed` in Redis operations → Background threads trying to use closed loop, restart service
+- `cache_set() got unexpected keyword argument 'ttl'` → Use `ttl_seconds` parameter instead
+- `pdpyras deprecation warnings` → Migrate to `pagerduty` library per migration guide
+
 **Performance Optimization**
 - Agent caching is enabled (5-minute cache timeout)
 - Redis caching reduces PagerDuty API calls

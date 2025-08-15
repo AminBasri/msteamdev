@@ -506,7 +506,7 @@ def _check_redis_health() -> Dict[str, Any]:
     try:
         # Simple ping test
         test_key = "health_check_test"
-        cache_set(test_key, "test", ttl=10)
+        cache_set(test_key, "test", ttl_seconds=10)
         result = cache_get(test_key)
         cache_delete(test_key)
         
