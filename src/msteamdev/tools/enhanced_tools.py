@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from msteamdev.models import AlertMatchCriteria, GetMatchingAlertsInput
 from msteamdev.tools.redis_client import cache_get, cache_set, cache_delete, cache_set_add, cache_set_is_member, cache_set_remove
+from msteamdev.tools.redis_client import cache_get_sync, cache_set_sync, cache_delete_sync
 from msteamdev.tools.redis_client import redis_client
 
 logger = logging.getLogger(__name__)
@@ -157,7 +158,7 @@ def get_matching_alerts_enhanced(criteria_input: Union[str, GetMatchingAlertsInp
         
         # Create cache key based on criteria
         cache_key = f"matching_alerts:{hash(str(criteria.dict()))}"
-        cached_result = cache_get(cache_key)
+        cached_result = cache_get_sync(cache_key)
         if cached_result is not None:
             logger.debug(f"Returning cached matching alerts: {cache_key}")
             return json.dumps(cached_result, indent=2)
@@ -200,7 +201,7 @@ def get_matching_alerts_enhanced(criteria_input: Union[str, GetMatchingAlertsInp
         }
         
         # Cache for 10 minutes
-        cache_set(cache_key, analysis, ttl_seconds=600)
+        cache_set_sync(cache_key, analysis, ttl_seconds=600)
         
         return json.dumps(analysis, indent=2)
         
@@ -292,7 +293,7 @@ def get_alert_trends(hours: int = 24) -> str:
     """
     try:
         cache_key = f"alert_trends:{hours}"
-        cached_result = cache_get(cache_key)
+        cached_result = cache_get_sync(cache_key)
         if cached_result is not None:
             return json.dumps(cached_result, indent=2)
         
@@ -325,7 +326,7 @@ def get_alert_trends(hours: int = 24) -> str:
         }
         
         # Cache for 15 minutes
-        cache_set(cache_key, trends, ttl_seconds=900)
+        cache_set_sync(cache_key, trends, ttl_seconds=900)
         
         return json.dumps(trends, indent=2)
         
@@ -506,9 +507,9 @@ def _check_redis_health() -> Dict[str, Any]:
     try:
         # Simple ping test
         test_key = "health_check_test"
-        cache_set(test_key, "test", ttl_seconds=10)
-        result = cache_get(test_key)
-        cache_delete(test_key)
+        cache_set_sync(test_key, "test", ttl_seconds=10)
+        result = cache_get_sync(test_key)
+        cache_delete_sync(test_key)
         
         return {
             "status": "healthy" if result == "test" else "degraded",
