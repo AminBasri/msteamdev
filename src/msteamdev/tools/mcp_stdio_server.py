@@ -28,11 +28,27 @@ mcp_handler.setFormatter(formatter)
 mcp_logger.addHandler(mcp_handler)
 
 from msteamuat.tools.alert_store import get_matching_alerts, read_alert_log, read_escalation_log
+from msteamuat.tools.enhanced_tools import (
+    read_alert_log_enhanced,
+    get_matching_alerts_enhanced,
+    check_escalation_eligibility_enhanced,
+    get_alert_trends,
+    get_system_health
+)
 
+# Combine original and enhanced tools
 TOOLS = {
+    # Original tools (for backward compatibility)
     "GetMatchingAlerts": get_matching_alerts,
     "ReadAlertLog": read_alert_log,
     "ReadEscalationLog": read_escalation_log,
+    
+    # Enhanced tools with advanced capabilities
+    "ReadAlertLogEnhanced": read_alert_log_enhanced,
+    "GetMatchingAlertsEnhanced": get_matching_alerts_enhanced,
+    "CheckEscalationEligibility": check_escalation_eligibility_enhanced,
+    "GetAlertTrends": get_alert_trends,
+    "GetSystemHealth": get_system_health,
 }
 
 def main():
@@ -87,6 +103,7 @@ def main():
                     "id": request_id,
                     "result": {
                         "tools": [
+                            # Original tools
                             {
                                 "name": "GetMatchingAlerts",
                                 "description": "Get alerts that match a specific criteria.",
@@ -113,6 +130,68 @@ def main():
                             {
                                 "name": "ReadEscalationLog",
                                 "description": "Read the entire escalation log.",
+                                "inputSchema": {
+                                    "type": "object",
+                                    "properties": {},
+                                    "required": []
+                                }
+                            },
+                            # Enhanced tools
+                            {
+                                "name": "ReadAlertLogEnhanced",
+                                "description": "Read alert log with enhanced filtering, caching, and time window support.",
+                                "inputSchema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "limit": {"type": "integer", "description": "Maximum alerts to return", "default": 100},
+                                        "severity_filter": {"type": "string", "description": "Filter by severity"},
+                                        "time_window_hours": {"type": "integer", "description": "Hours to look back"}
+                                    },
+                                    "required": []
+                                }
+                            },
+                            {
+                                "name": "GetMatchingAlertsEnhanced",
+                                "description": "Find alerts with enhanced pattern matching and analysis.",
+                                "inputSchema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "criteria_input": {
+                                            "type": "object",
+                                            "description": "Alert matching criteria with analysis"
+                                        }
+                                    },
+                                    "required": ["criteria_input"]
+                                }
+                            },
+                            {
+                                "name": "CheckEscalationEligibility",
+                                "description": "Enhanced escalation check with detailed analysis and business logic.",
+                                "inputSchema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "incident_number": {"type": "string", "description": "Incident number"},
+                                        "severity": {"type": "string", "description": "Alert severity"},
+                                        "title": {"type": "string", "description": "Alert title"},
+                                        "timestamp": {"type": "string", "description": "Alert timestamp"}
+                                    },
+                                    "required": ["incident_number", "severity", "title", "timestamp"]
+                                }
+                            },
+                            {
+                                "name": "GetAlertTrends",
+                                "description": "Analyze alert trends and patterns over time.",
+                                "inputSchema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "hours": {"type": "integer", "description": "Hours to analyze", "default": 24}
+                                    },
+                                    "required": []
+                                }
+                            },
+                            {
+                                "name": "GetSystemHealth",
+                                "description": "Get comprehensive system health metrics and status.",
                                 "inputSchema": {
                                     "type": "object",
                                     "properties": {},

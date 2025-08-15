@@ -16,16 +16,14 @@ dependencies = [
     "pdpyras",
     "requests",
     "mcp",
+    "pytz",
     "pagerduty",
     "pip",
     "setuptools",
     "wheel",
     "mcpadapt",
     "redis",
-    "pandas",
-    "plotly",
-    "openlit",
-    "opik"
+    "openlit"
 ]
 
 [project.scripts]

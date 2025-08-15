@@ -1,0 +1,143 @@
+# Enhanced Tasks Configuration - Compatible with crew_enhanced_v2.py
+# Improved task definitions while maintaining your current pipeline flow
+
+recommend_actions:
+  description: >
+    Analyze the alert with title "{title}", severity "{severity}", metric "{metric}", and incident number "{incident_number}".
+    Generate specific, actionable remediation steps for this IT alert based on the severity, affected systems, 
+    and proven troubleshooting methodologies. Focus on practical solutions that can be implemented quickly.
+    
+    Provide 2-3 specific actions to address it, tailored to the alert's context and severity level.
+    Each action should be technically accurate, feasible, and include verification steps where applicable.
+  expected_output: >
+    A list of 2-3 recommended technical actions that are specific, actionable, and appropriate for the severity level.
+    Each action should be practical and based on industry best practices for IT incident response.
+  agent: action_recommender
+  output_pydantic: src.msteamuat.tools.notify.RecommendedActions
+
+evaluate_escalation:
+  description: >
+    Evaluate whether the alert should be escalated to the BAU team based on severity, timing, suppression rules,
+    and business impact. Use the available tools to check alert history and escalation patterns.
+    
+    Alert Context:
+    - Title: {title}
+    - Severity: {severity}
+    - Incident: {incident_number} 
+    - Timestamp: {timestamp}
+    - Metric: {metric}
+    
+    Decision Criteria:
+    1. Check suppression windows (3 days for critical/high/medium/low, 5 days for warning)
+    2. Verify if similar alerts are already being handled
+    3. Assess business hours vs after-hours impact
+    4. Consider alert frequency and pattern changes
+    5. Review recent escalation history for similar issues
+    
+    Use the ReadAlertLog, ReadEscalationLog, and GetMatchingAlerts tools to investigate further if needed.
+    Your decision must be data-driven and clearly justified.
+  expected_output: >
+    Respond with either "Yes, escalate" or "No, suppress" and include a detailed explanation
+    of the decision based on the alert analysis and historical data.
+  agent: escalation_checker
+
+notify_bau:
+  description: >
+    Compose a professional email for alert escalation with details:
+    - Title: {title}
+    - Severity: {severity}
+    - Metric: {metric}
+    - Incident Number: {incident_number}
+    - Reason: {reason}
+    - Recommended Actions: {recommended_actions}
+    
+    Create a structured email notification that provides all necessary context for rapid incident response.
+    Use appropriate urgency indicators for the severity level and ensure the message is clear and actionable.
+    
+    The body should end with the following sign-off:
+    "Best regards,
+    CrewAI Alerting System
+    Managed Service Team"
+    ensuring newlines are properly formatted for signature.
+  expected_output: >
+    A structured object with email subject and body, formatted as:
+      subject: ""
+      body: ""
+    
+    Draft a professional email message for the BAU team, or clearly state if escalation was not approved.
+    Ensure special characters (e.g., backslashes, newlines) are properly handled.
+  agent: communicator
+  output_pydantic: src.msteamuat.tools.notify.EmailContent
+
+shift_report:
+  description: >
+    Generate a comprehensive shift report for NOC team management:
+    
+    SHIFT INFORMATION:
+    - Period: {shift_start} to {shift_end} (+08)
+    - Type: {shift_type}
+    - Total Alerts Processed: {total_alerts}
+    
+    ALERT BREAKDOWN:
+    - Critical: {critical_alerts}
+    - High: {high_alerts} 
+    - Warning: {warning_alerts}
+    - Resolved: {resolved_alerts}
+    - Escalated: {escalated_alerts}
+    
+    DETAILED ANALYSIS:
+    {alert_details}
+    
+    Report Requirements:
+    1. Executive summary with key metrics
+    2. Alert categorization and trends
+    3. Escalation analysis and justifications
+    4. System performance indicators
+    5. Recommendations for process improvements
+    6. Highlight any unusual patterns or concerns
+    7. Action items for next shift
+    
+    Format for professional presentation to management.
+  expected_output: >
+    Comprehensive shift report containing:
+    - Executive summary
+    - Detailed metrics and analysis
+    - Alert trend analysis
+    - Escalation justification summary
+    - Process recommendations
+    - Handover notes for next shift
+  agent: reporter
+  context: []
+  output_pydantic: src.msteamuat.models.ShiftReportOutput
+
+check_and_acknowledge_alert:
+  description: >
+    Manage PagerDuty incident lifecycle for incident {incident_number}:
+    
+    Workflow:
+    1. Wait for the configured acknowledgment delay
+    2. Check current incident status using GetIncidentStatus
+    3. If status is 'triggered', acknowledge using AcknowledgeIncident
+    4. Update internal tracking and cache
+    5. Log all actions for audit trail
+    
+    Error Handling:
+    - Retry on transient API failures
+    - Log all API interactions
+    - Update Redis cache appropriately
+    - Handle rate limiting gracefully
+    
+    Success Criteria:
+    - Incident successfully acknowledged in PagerDuty
+    - Internal state updated correctly
+    - Audit log entries created
+  expected_output: >
+    Status report containing:
+    - Current incident status
+    - Acknowledgment result (if performed)
+    - API interaction summary
+    - Any errors or warnings
+    - Next recommended actions
+  agent: pagerduty_manager
+  context: []
+  output_pydantic: src.msteamuat.models.IncidentManagementResult

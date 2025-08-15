@@ -4,8 +4,13 @@ import logging
 import os
 from crewai.tools import tool
 
-LOG_FILE = "src/msteamuat/alert_log.json"
-ESCALATION_LOG_FILE = "src/msteamuat/escalation_log.json"
+# Get the directory that contains the 'tools' subdirectory and the log files
+# '..' navigates up one directory from the script's location
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+
+# Construct absolute paths to the log files
+LOG_FILE = os.path.join(BASE_DIR, "alert_log.json")
+ESCALATION_LOG_FILE = os.path.join(BASE_DIR, "escalation_log.json")
 
 @tool("ReadAlertLog")
 def read_alert_log() -> str:
@@ -29,7 +34,7 @@ def read_escalation_log() -> str:
     except FileNotFoundError:
         return "Escalation log not found."
 
-def _load_log():
+async def _load_log():
     """Load alerts from alert_log.json."""
     logging.info("Loading alert log from file: %s", LOG_FILE)
     try:
@@ -38,7 +43,7 @@ def _load_log():
     except FileNotFoundError:
         return []
 
-def _load_escalation_log():
+async def _load_escalation_log():
     """Load escalation events from escalation_log.json."""
     logging.info("Loading escalation log from file: %s", ESCALATION_LOG_FILE)
     try:
@@ -47,9 +52,9 @@ def _load_escalation_log():
     except FileNotFoundError:
         return []
 
-def _save_log(data):
+async def _save_log(data):
     """Save alert to alert_log.json, avoiding duplicates."""
-    alerts = _load_log()
+    alerts = await _load_log()
     if not any(
         a.get('incident_number') == data['incident_number'] and
         a.get('title') == data['title'] and
@@ -60,9 +65,9 @@ def _save_log(data):
         with open(LOG_FILE, "a") as f:
             f.write(json.dumps(data) + "\n")
 
-def _save_escalation_log(data):
+async def _save_escalation_log(data):
     """Save escalation event to escalation_log.json, avoiding duplicates."""
-    escalations = _load_escalation_log()
+    escalations = await _load_escalation_log()
     if not any(
         e.get('incident_number') == data['incident_number'] and
         e.get('timestamp') == data['timestamp']
@@ -81,10 +86,10 @@ def count_weekdays(start_date, end_date):
         current_date += timedelta(days=1)
     return weekday_count
 
-def check_escalation_eligibility(current_alert):
+async def check_escalation_eligibility(current_alert):
     """Determine if the alert should be escalated based on weekday span and cooldown after escalation."""
-    alerts = _load_log()
-    escalations = _load_escalation_log()
+    alerts = await _load_log()
+    escalations = await _load_escalation_log()
 
     # Define current time and threshold
     current_time = datetime.fromisoformat(current_alert["timestamp"].replace("Z", "+00:00"))
@@ -101,7 +106,7 @@ def check_escalation_eligibility(current_alert):
     ]
     if recent_escalations:
         recent_lines = [
-            f"    - Incident {e['incident_number']}: Escalated on {e['timestamp']} "
+            f"     - Incident {e['incident_number']}: Escalated on {e['timestamp']} "
             f"({(current_time - datetime.fromisoformat(e['timestamp'].replace('Z', '+00:00'))).days} day(s) ago)"
             for e in recent_escalations
         ]
@@ -139,7 +144,7 @@ def check_escalation_eligibility(current_alert):
         span_days = count_weekdays(earliest_time, latest_time)
 
         history_lines = [
-            f"    - Incident {a['incident_number']}: Triggered on {a['timestamp']} "
+            f"     - Incident {a['incident_number']}: Triggered on {a['timestamp']} "
             f"({(current_time - datetime.fromisoformat(a['timestamp'].replace('Z', '+00:00'))).days} day(s) ago)"
             for a in matching_alerts
         ]
@@ -198,7 +203,7 @@ def check_escalation_eligibility(current_alert):
         )
 
 @tool("GetMatchingAlerts")
-def get_matching_alerts(title: str, severity: str, hours: int = 24) -> list:
+async def get_matching_alerts(title: str, severity: str, hours: int = 24) -> list:
     """
     Get matching alerts from the log file within a specified time window.
 
@@ -210,7 +215,7 @@ def get_matching_alerts(title: str, severity: str, hours: int = 24) -> list:
     Returns:
         list: A list of matching alerts.
     """
-    alerts = _load_log()
+    alerts = await _load_log()
     matching_alerts = []
     now = datetime.now()
 

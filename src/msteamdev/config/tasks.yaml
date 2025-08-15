@@ -91,10 +91,32 @@ shift_report:
 
 check_and_acknowledge_alert:
   description: >
-    Check the status of PagerDuty incident {incident_number} 5 minutes after receipt using the MCP GetIncidentStatus tool.
-    If the status is 'triggered', acknowledge the incident using the MCP AcknowledgeIncident tool.
+    Manage PagerDuty incident lifecycle for incident {incident_number}:
+    
+    Workflow:
+    1. Wait for the configured acknowledgment delay
+    2. Check current incident status using GetIncidentStatus
+    3. If status is 'triggered', acknowledge using AcknowledgeIncident
+    4. Update internal tracking and cache
+    5. Log all actions for audit trail
+    
+    Error Handling:
+    - Retry on transient API failures
+    - Log all API interactions
+    - Update Redis cache appropriately
+    - Handle rate limiting gracefully
+    
+    Success Criteria:
+    - Incident successfully acknowledged in PagerDuty
+    - Internal state updated correctly
+    - Audit log entries created
   expected_output: >
-    A JSON object containing:
-    - status: The current status of the incident ('triggered', 'acknowledged', 'resolved', or 'error').
-    - acknowledgment_result: Result of the acknowledgment action (if performed).
+    Status report containing:
+    - Current incident status
+    - Acknowledgment result (if performed)
+    - API interaction summary
+    - Any errors or warnings
+    - Next recommended actions
   agent: pagerduty_manager
+  context: []
+output_pydantic: src.msteamuat.models.IncidentManagementResult

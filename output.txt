@@ -1,0 +1,121 @@
+============================= test session starts ==============================
+platform linux -- Python 3.11.4, pytest-8.4.1, pluggy-1.6.0
+rootdir: /home/crewai/msteamuat
+configfile: pyproject.toml
+plugins: anyio-4.9.0, langsmith-0.3.45, opik-1.8.13
+collected 14 items
+
+test_enhanced_pytest.py ............FF                                   [100%]
+
+=================================== FAILURES ===================================
+________________ TestToolCompatibility.test_function_docstrings ________________
+
+self = <test_enhanced_pytest.TestToolCompatibility object at 0x7f1f4df72810>
+enhanced_tools = {'check_escalation_eligibility_enhanced': <bound method Tool._run of Tool(name='CheckEscalationEligibility', descripti... current_usage_count=0, func=<function with_tool_metrics.<locals>.decorator.<locals>.wrapper at 0x7f1f45f9d620>)>, ...}
+
+    def test_function_docstrings(self, enhanced_tools):
+        """Test that all enhanced tools have proper docstrings."""
+        functions_to_check = [
+            'read_alert_log_enhanced',
+            'get_matching_alerts_enhanced',
+            'check_escalation_eligibility_enhanced',
+            'get_alert_trends',
+            'enhanced_get_system_health'
+        ]
+    
+        for func_name in functions_to_check:
+            func = enhanced_tools[func_name]
+>           assert func.__doc__ is not None, f"{func_name} missing docstring"
+E           AssertionError: read_alert_log_enhanced missing docstring
+E           assert None is not None
+E            +  where None = _run.__doc__
+
+test_enhanced_pytest.py:290: AssertionError
+__________________ TestToolCompatibility.test_error_handling ___________________
+
+self = <test_enhanced_pytest.TestToolCompatibility object at 0x7f1f4df72e90>
+enhanced_tools = {'check_escalation_eligibility_enhanced': <bound method Tool._run of Tool(name='CheckEscalationEligibility', descripti... current_usage_count=0, func=<function with_tool_metrics.<locals>.decorator.<locals>.wrapper at 0x7f1f45f9d620>)>, ...}
+suppress_warnings = None
+
+    def test_error_handling(self, enhanced_tools, suppress_warnings):
+        """Test error handling in enhanced tools."""
+        # Test with invalid parameters - should not crash
+        try:
+>           result = enhanced_tools['check_escalation_eligibility_enhanced'](
+                incident_number="INVALID",
+                severity="invalid_severity",
+                title="",
+                timestamp="invalid_timestamp"
+            )
+
+test_enhanced_pytest.py:297: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.venv/lib/python3.11/site-packages/crewai/tools/base_tool.py:218: in _run
+    return self.func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+args = ()
+kwargs = {'incident_number': 'INVALID', 'severity': 'invalid_severity', 'timestamp': 'invalid_timestamp', 'title': ''}
+start_time = datetime.datetime(2025, 8, 14, 9, 10, 34, 677443), duration = 7e-06
+
+    def wrapper(*args, **kwargs):
+        """Wrapper function with preserved docstring and metrics tracking."""
+        start_time = datetime.now()
+        try:
+>           result = func(*args, **kwargs)
+                     ^^^^^^^^^^^^^^^^^^^^^
+E           TypeError: check_escalation_eligibility_enhanced() missing 1 required positional argument: 'status'
+
+src/msteamuat/tools/enhanced_tools.py:59: TypeError
+
+During handling of the above exception, another exception occurred:
+
+self = <test_enhanced_pytest.TestToolCompatibility object at 0x7f1f4df72e90>
+enhanced_tools = {'check_escalation_eligibility_enhanced': <bound method Tool._run of Tool(name='CheckEscalationEligibility', descripti... current_usage_count=0, func=<function with_tool_metrics.<locals>.decorator.<locals>.wrapper at 0x7f1f45f9d620>)>, ...}
+suppress_warnings = None
+
+    def test_error_handling(self, enhanced_tools, suppress_warnings):
+        """Test error handling in enhanced tools."""
+        # Test with invalid parameters - should not crash
+        try:
+            result = enhanced_tools['check_escalation_eligibility_enhanced'](
+                incident_number="INVALID",
+                severity="invalid_severity",
+                title="",
+                timestamp="invalid_timestamp"
+            )
+            # Should return error message, not crash
+            assert isinstance(result, str)
+        except Exception as e:
+            # If it does throw an exception, it should be handled gracefully
+>           assert "Error" in str(e)
+E           assert 'Error' in "check_escalation_eligibility_enhanced() missing 1 required positional argument: 'status'"
+E            +  where "check_escalation_eligibility_enhanced() missing 1 required positional argument: 'status'" = str(TypeError("check_escalation_eligibility_enhanced() missing 1 required positional argument: 'status'"))
+
+test_enhanced_pytest.py:307: AssertionError
+------------------------------ Captured log call -------------------------------
+ERROR    msteamuat.tools.enhanced_tools:enhanced_tools.py:66 Tool CheckEscalationEligibility failed: check_escalation_eligibility_enhanced() missing 1 required positional argument: 'status'
+Traceback (most recent call last):
+  File "/home/crewai/msteamuat/src/msteamuat/tools/enhanced_tools.py", line 59, in wrapper
+    result = func(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^
+TypeError: check_escalation_eligibility_enhanced() missing 1 required positional argument: 'status'
+=============================== warnings summary ===============================
+test_enhanced_pytest.py::TestEnhancedToolsDirect::test_read_alert_log_enhanced
+  /home/crewai/msteamuat/.venv/lib/python3.11/site-packages/pydantic/_internal/_config.py:323: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warnings.warn(DEPRECATION_MESSAGE, DeprecationWarning)
+
+test_enhanced_pytest.py::TestMCPServerIntegration::test_mcp_tools_loading
+  /home/crewai/msteamuat/.venv/lib/python3.11/site-packages/pdpyras.py:26: UserWarning: The package "pdpyras" is deprecated and as of 2025-06-20 will no longer receive updates. Please use "pagerduty" instead. Migration guide: https://pagerduty.github.io/python-pagerduty/pdpyras_migration_guide.html
+    warn(
+
+test_enhanced_pytest.py: 31 warnings
+  /home/crewai/msteamuat/.venv/lib/python3.11/site-packages/pydantic/fields.py:1089: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'items', 'anyOf', 'enum', 'properties'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED test_enhanced_pytest.py::TestToolCompatibility::test_function_docstrings
+FAILED test_enhanced_pytest.py::TestToolCompatibility::test_error_handling - ...
+================== 2 failed, 12 passed, 33 warnings in 16.59s ==================
