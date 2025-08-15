@@ -694,14 +694,18 @@ async def _run_alert_pipeline_async(alert: dict, mcp_tools: list = None):
         else:
             logger.info(f"✅ Alert #{incident_number} is already resolved. Skipping acknowledgment scheduling.")
 
+        delay = (occurred_at + timedelta(minutes=delay_minutes)) - now
+        seconds = max(0, delay.total_seconds())
+        
+        logger.info(f"⏱ Holding alert {incident_number} for {int(seconds)} seconds before escalation decision")
+
+        if alert["status"] == "triggered":
+            asyncio.create_task(check_and_acknowledge_alert_task(alert, mcp_tools))
+            logger.info(f"⏳ Scheduled acknowledgment check for incident {incident_number}")
+        else:
+            logger.info(f"✅ Alert #{incident_number} is already resolved. Skipping acknowledgment scheduling.")
+
         await asyncio.sleep(seconds)
-
-        if await check_resolution_status(alert, delay_minutes):
-            logger.info(f"✅ Alert with incident #{incident_number} resolved within {delay_minutes} minutes")
-            return
-
-        await cache_set_add(ESCALATION_SET_NAME, incident_number)
-        await run_escalation_pipeline(alert, mcp_tools)
 
     except Exception as e:
         logger.error(f"Error in _run_alert_pipeline_async for incident {incident_number}: {str(e)}")
