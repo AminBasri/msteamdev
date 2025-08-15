@@ -1,4 +1,4 @@
-# src/msteamuat/llm.py
+# src/msteamdev/llm.py
 
 import os
 import yaml
@@ -12,7 +12,7 @@ logger.propagate = False
 logger.handlers.clear()
 
 # Add FileHandler for llm.log
-file_handler = logging.FileHandler('/home/crewai/msteamuat/log/llm.log')
+file_handler = logging.FileHandler('/home/crewai/msteamdev/log/llm.log')
 file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
 logger.addHandler(file_handler)
 
@@ -52,7 +52,7 @@ def get_llm():
     }
     '''
     # Load from config file (if exists)
-    config_file = "src/msteamuat/config/llm.yaml"
+    config_file = "src/msteamdev/config/llm.yaml"
     file_config = load_yaml(config_file)
     '''
     # Merge configurations: environment variables override file, file overrides defaults

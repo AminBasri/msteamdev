@@ -5,7 +5,7 @@ import logging
 import traceback
 
 # Determine the project root directory to correctly place the log file
-# The script is in src/msteamuat/tools, so root is 3 levels up.
+# The script is in src/msteamdev/tools, so root is 3 levels up.
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
 log_dir = os.path.join(project_root, 'log')
 os.makedirs(log_dir, exist_ok=True)
@@ -27,8 +27,8 @@ formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
 mcp_handler.setFormatter(formatter)
 mcp_logger.addHandler(mcp_handler)
 
-from msteamuat.tools.alert_store import get_matching_alerts, read_alert_log, read_escalation_log
-from msteamuat.tools.enhanced_tools import (
+from msteamdev.tools.alert_store import get_matching_alerts, read_alert_log, read_escalation_log
+from msteamdev.tools.enhanced_tools import (
     read_alert_log_enhanced,
     get_matching_alerts_enhanced,
     check_escalation_eligibility_enhanced,

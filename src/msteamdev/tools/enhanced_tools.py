@@ -8,9 +8,9 @@ from functools import lru_cache, wraps
 from crewai.tools import tool
 from pydantic import BaseModel, Field
 
-from msteamuat.models import AlertMatchCriteria, GetMatchingAlertsInput
-from msteamuat.tools.redis_client import cache_get, cache_set, cache_delete, cache_set_add, cache_set_is_member, cache_set_remove
-from msteamuat.tools.redis_client import redis_client
+from msteamdev.models import AlertMatchCriteria, GetMatchingAlertsInput
+from msteamdev.tools.redis_client import cache_get, cache_set, cache_delete, cache_set_add, cache_set_is_member, cache_set_remove
+from msteamdev.tools.redis_client import redis_client
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +95,7 @@ async def read_alert_log_enhanced(
             logger.debug(f"Returning cached alert log: {cache_key}")
             return json.dumps(cached_result, indent=2)
         
-        from msteamuat.tools.alert_store import _load_log
+        from msteamdev.tools.alert_store import _load_log
         alerts = await asyncio.to_thread(_load_log)
         
         # Apply time filter if specified
@@ -162,7 +162,7 @@ def get_matching_alerts_enhanced(criteria_input: Union[str, GetMatchingAlertsInp
             logger.debug(f"Returning cached matching alerts: {cache_key}")
             return json.dumps(cached_result, indent=2)
         
-        from msteamuat.tools.alert_store import _load_log
+        from msteamdev.tools.alert_store import _load_log
         alerts = _load_log()
         
         matching_alerts = []
@@ -230,7 +230,7 @@ def check_escalation_eligibility_enhanced(
             timestamp = data.get('timestamp')
             status = data.get('status')
 
-        from msteamuat.tools.alert_store import check_escalation_eligibility
+        from msteamdev.tools.alert_store import check_escalation_eligibility
         
         # Create alert dict for existing function
         alert = {
@@ -279,7 +279,7 @@ def get_alert_trends(hours: int = 24) -> str:
         if cached_result is not None:
             return json.dumps(cached_result, indent=2)
         
-        from msteamuat.tools.alert_store import _load_log
+        from msteamdev.tools.alert_store import _load_log
         alerts = _load_log()
         
         cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
@@ -388,7 +388,7 @@ def _get_detailed_escalation_analysis(alert: Dict) -> Dict[str, Any]:
 def _count_similar_alerts(alert: Dict) -> int:
     """Count similar alerts in recent history."""
     try:
-        from msteamuat.tools.alert_store import _load_log
+        from msteamdev.tools.alert_store import _load_log
         alerts = _load_log()
         
         cutoff = datetime.now(timezone.utc) - timedelta(days=1)
@@ -500,7 +500,7 @@ def _check_mcp_health() -> Dict[str, Any]:
 def _get_active_alerts_count() -> int:
     """Get count of active alerts."""
     try:
-        from msteamuat.tools.alert_store import _load_log
+        from msteamdev.tools.alert_store import _load_log
         alerts = _load_log()
         return sum(1 for alert in alerts if alert.get("status", "").lower() in ["triggered", "acknowledged"])
     except:
@@ -559,7 +559,7 @@ def _get_time_factor(timestamp: str) -> str:
 def _count_recent_similar(alert: Dict) -> int:
     """Count recent similar alerts."""
     try:
-        from msteamuat.tools.alert_store import _load_log
+        from msteamdev.tools.alert_store import _load_log
         alerts = _load_log()
         
         cutoff = datetime.now(timezone.utc) - timedelta(hours=6)

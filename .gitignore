@@ -8,7 +8,7 @@ __pycache__/
 uv.lock
 *.swp
 *.gz
-src/msteamuat/crewai.ndjson
+*.ndjson
 *xls
 *.xlsx
 *.csv

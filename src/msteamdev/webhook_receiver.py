@@ -1,8 +1,8 @@
-# src/msteamuat/webhook_receiver.py
+# src/msteamdev/webhook_receiver.py
 
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
-from msteamuat.crew import start_alert_pipeline, get_user_email_from_pagerduty
+from msteamdev.crew import start_alert_pipeline, get_user_email_from_pagerduty
 import json
 import os
 import re
@@ -12,7 +12,7 @@ from typing import List
 
 # FastAPI application for receiving PagerDuty webhooks
 app = FastAPI(title="PagerDuty Webhook Receiver")
-LOG_PATH = "src/msteamuat/alert_log.json"
+LOG_PATH = "src/msteamdev/alert_log.json"
 
 # Configuration flags for filtering
 FILTER_ENABLED = True
@@ -32,7 +32,7 @@ webhook_logger.setLevel(logging.INFO)
 # Prevent double logging to root logger (avoids duplication in crew.log)
 webhook_logger.propagate = False
 
-webhook_handler = logging.FileHandler("/home/crewai/msteamuat/log/webhook_receiver.log")
+webhook_handler = logging.FileHandler("/home/crewai/msteamdev/log/webhook_receiver.log")
 webhook_handler.setLevel(logging.INFO)
 formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
 webhook_handler.setFormatter(formatter)
@@ -218,3 +218,7 @@ async def update_config(request: Request):
 @app.get("/health")
 async def health_check():
     return JSONResponse(content={"status": "healthy","timestamp": datetime.utcnow().isoformat(), "version": "1.0.0"})  # 200 OK
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=7005, log_level="info")

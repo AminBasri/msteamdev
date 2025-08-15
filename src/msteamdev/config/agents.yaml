@@ -1,4 +1,4 @@
-# src: msteamuat/src/msteamuat/config/agents.yaml
+# src: msteamdev/src/msteamdev/config/agents.yaml
 # This file defines the agents used in the IT alert management system.
 # Each agent has a role, goal, backstory, and configuration for the LLM they use.
 

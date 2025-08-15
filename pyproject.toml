@@ -1,5 +1,5 @@
 [project]
-name = "msteamuat"
+name = "msteamdev"
 version = "0.1.0"
 description = "msteam using crewAI"
 authors = [{ name = "Amin Basri", email = "noramin@infopro.com.my" }]
@@ -27,11 +27,11 @@ dependencies = [
 ]
 
 [project.scripts]
-msteam = "msteamuat.main:run"
-run_crew = "msteamuat.main:run"
-train = "msteamuat.main:train"
-replay = "msteamuat.main:replay"
-test = "msteamuat.main:test"
+msteam = "msteamdev.main:run"
+run_crew = "msteamdev.main:run"
+train = "msteamdev.main:train"
+replay = "msteamdev.main:replay"
+test = "msteamdev.main:test"
 
 [build-system]
 requires = ["hatchling"]

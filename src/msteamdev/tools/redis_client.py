@@ -1,4 +1,4 @@
-# src/msteamuat/tools/redis_client.py
+# src/msteamdev/tools/redis_client.py
 import redis.asyncio as redis
 import os
 import json
@@ -12,7 +12,7 @@ logger.propagate = False
 logger.handlers.clear()
 
 # Add FileHandler for redis_client.log
-log_dir = '/home/crewai/msteamuat/log/'
+log_dir = '/home/crewai/msteamdev/log/'
 os.makedirs(log_dir, exist_ok=True)
 file_handler = logging.FileHandler(os.path.join(log_dir, 'redis_client.log'))
 file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))

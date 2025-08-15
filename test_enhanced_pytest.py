@@ -30,7 +30,7 @@ def suppress_warnings():
 def enhanced_tools():
     """Import enhanced tools or skip tests if not available."""
     try:
-        from msteamuat.tools.enhanced_tools import (
+        from msteamdev.tools.enhanced_tools import (
             read_alert_log_enhanced,
             get_matching_alerts_enhanced,
             check_escalation_eligibility_enhanced,
@@ -53,7 +53,7 @@ def enhanced_tools():
 def crew():
     """Import crew enhanced or return None if not available."""
     try:
-        from msteamuat.crew import (
+        from msteamdev.crew import (
             get_mcp_tools, 
             load_agents, 
             get_system_health,

@@ -7,7 +7,7 @@ from datetime import datetime
 import json
 
 # Directory where logs are stored
-LOG_DIR = '/home/crewai/msteamuat/log/'
+LOG_DIR = '/home/crewai/msteamdev/log/'
 
 
 def parse_crew_log(log_path):

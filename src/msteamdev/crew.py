@@ -15,13 +15,13 @@ import re
 import requests
 import openlit
 from crewai import Agent, Task, Crew, Process
-from msteamuat.llm import get_llm
+from msteamdev.llm import get_llm
 from crewai_tools import MCPServerAdapter
 from mcp import StdioServerParameters
-from msteamuat.tools.alert_store import check_escalation_eligibility, _load_log
+from msteamdev.tools.alert_store import check_escalation_eligibility, _load_log
 from crewai.tools import tool
 from pdpyras import APISession
-from msteamuat.tools.redis_client import cache_set_add, cache_set_remove, cache_set_is_member
+from msteamdev.tools.redis_client import cache_set_add, cache_set_remove, cache_set_is_member
 
 # Initialize OpenLit for telemetry
 openlit.init()
@@ -322,7 +322,7 @@ def load_agents(mcp_tools=None):
         logger.debug("Using cached agents")
         return _agents_cache[cache_key]
     
-    agent_def = load_yaml("src/msteamuat/config/agents_enhanced.yaml")
+    agent_def = load_yaml("src/msteamdev/config/agents_enhanced.yaml")
     agents = {}
     for name, cfg in agent_def.items():
         llm = get_llm()
@@ -370,7 +370,7 @@ def load_agents(mcp_tools=None):
 
 def load_tasks():
     """Load tasks from YAML."""
-    return yaml.safe_load(open("src/msteamuat/config/tasks_enhanced.yaml", "r"))
+    return yaml.safe_load(open("src/msteamdev/config/tasks_enhanced.yaml", "r"))
 
 # PRESERVE your existing check_resolution_status
 async def check_resolution_status(alert: dict, delay_minutes: int) -> bool:
@@ -518,7 +518,7 @@ async def run_escalation_pipeline(alert: dict, mcp_tools: list):
     start_time = time.time()
     incident_number = alert["incident_number"]
     logger.info(f"⏰ Escalation pipeline triggered for incident {incident_number}")
-    from msteamuat.tools.notify import send_notification
+    from msteamdev.tools.notify import send_notification
 
     eligible = False
     reason = ""
@@ -745,7 +745,7 @@ def get_system_health() -> dict:
     
     # Add enhanced tools metrics if available
     try:
-        from msteamuat.tools.enhanced_tools import tool_metrics, get_system_health as enhanced_health
+        from msteamdev.tools.enhanced_tools import tool_metrics, get_system_health as enhanced_health
         health_report["enhanced_tools_metrics"] = tool_metrics.get_stats()
         
         # Get enhanced system health data (call the tool's run method)

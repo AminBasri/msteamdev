@@ -26,7 +26,7 @@ except ImportError:
     yaml = None
 
 try:
-    from msteamuat.crew_enhanced_v2 import (
+    from msteamdev.crew_enhanced_v2 import (
         get_mcp_tools, 
         load_agents, 
         get_system_health,
@@ -38,7 +38,7 @@ except ImportError as e:
     CREW_AVAILABLE = False
 
 try:
-    from msteamuat.tools.enhanced_tools import (
+    from msteamdev.tools.enhanced_tools import (
         read_alert_log_enhanced,
         get_matching_alerts_enhanced,
         check_escalation_eligibility_enhanced,

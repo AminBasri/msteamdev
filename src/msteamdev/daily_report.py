@@ -9,9 +9,9 @@ from email.mime.multipart import MIMEMultipart
 from email.header import Header
 from email.utils import formataddr
 from crewai import Agent, Task, Crew
-from msteamuat.crew import load_agents, load_yaml, check_resolution_status
-from msteamuat.tools.alert_store import check_escalation_eligibility
-from msteamuat.models import ShiftReportOutput, AlertDetail
+from msteamdev.crew import load_agents, load_yaml, check_resolution_status
+from msteamdev.tools.alert_store import check_escalation_eligibility
+from msteamdev.models import ShiftReportOutput, AlertDetail
 from pydantic import BaseModel
 import pytz
 import re
@@ -27,7 +27,7 @@ logger.propagate = False
 logger.handlers.clear()
 
 # Add FileHandler for report.log
-file_handler = logging.FileHandler('/home/crewai/msteamuat/log/report.log')
+file_handler = logging.FileHandler('/home/crewai/msteamdev/log/report.log')
 file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
 logger.addHandler(file_handler)
 
@@ -36,7 +36,7 @@ stream_handler = logging.StreamHandler()
 stream_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
 logger.addHandler(stream_handler)
 
-LOG_PATH = "src/msteamuat/alert_log.json"
+LOG_PATH = "src/msteamdev/alert_log.json"
 LOCAL_TZ = pytz.timezone('Asia/Singapore')
 
 def validate_rocketchat_webhook() -> tuple[bool, str]:
@@ -186,7 +186,7 @@ def run(shift_type=None, shift_start=None, shift_end=None):
     alerts = load_alerts(shift_start_utc, shift_end_utc)
 
     agents = load_agents()
-    tasks_def = load_yaml("src/msteamuat/config/tasks.yaml")
+    tasks_def = load_yaml("src/msteamdev/config/tasks.yaml")
     
     reporter_agent = agents.get("reporter")
     if not reporter_agent:

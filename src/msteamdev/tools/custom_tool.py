@@ -1,4 +1,4 @@
-# src/msteamuat/tools/custom_tool.py
+# src/msteamdev/tools/custom_tool.py
 
 import os
 from typing import Annotated

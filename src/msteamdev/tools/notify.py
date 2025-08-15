@@ -11,8 +11,8 @@ from typing import Dict, Tuple
 import pytz
 from datetime import datetime, timezone
 from crewai import Agent, Task, Crew
-from msteamuat.crew import load_agents, load_yaml
-from msteamuat.models import RecommendedActions, EmailContent
+from msteamdev.crew import load_agents, load_yaml
+from msteamdev.models import RecommendedActions, EmailContent
 from functools import wraps
 import time
 import openlit
@@ -30,7 +30,7 @@ logger.propagate = False
 logger.handlers.clear()
 
 # Add FileHandler for notify.log
-file_handler = logging.FileHandler('/home/crewai/msteamuat/log/notify.log')
+file_handler = logging.FileHandler('/home/crewai/msteamdev/log/notify.log')
 file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
 logger.addHandler(file_handler)
 
@@ -133,7 +133,7 @@ def generate_recommended_actions(alert: Dict) -> RecommendedActions:
     try:
         incident_number = alert.get('incident_number', 'N/A')
         agents = load_agents()
-        tasks_def = load_yaml("src/msteamuat/config/tasks.yaml")
+        tasks_def = load_yaml("src/msteamdev/config/tasks.yaml")
         action_recommender = agents.get("action_recommender")
         if not action_recommender:
             logger.error("Missing action_recommender agent")
@@ -180,7 +180,7 @@ def generate_email_content(alert: Dict, reason: str) -> Tuple[str, str]:
         actions_text = recommended_actions.format_for_email()
 
         agents = load_agents()
-        tasks_def = load_yaml("src/msteamuat/config/tasks.yaml")
+        tasks_def = load_yaml("src/msteamdev/config/tasks.yaml")
         communicator_agent = agents.get("communicator")
         if not communicator_agent:
             logger.error("Missing communicator agent")

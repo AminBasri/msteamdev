@@ -1,4 +1,4 @@
-# src/msteamuat/tools/mcp_server.py
+# src/msteamdev/tools/mcp_server.py
 
 from fastapi import FastAPI, HTTPException, Request, Response
 from pydantic import BaseModel
@@ -19,7 +19,7 @@ logger.propagate = False
 logger.handlers.clear()
 
 # Add FileHandler for mcp_server.log
-file_handler = logging.FileHandler('/home/crewai/msteamuat/log/mcp_server.log')
+file_handler = logging.FileHandler('/home/crewai/msteamdev/log/mcp_server.log')
 file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
 logger.addHandler(file_handler)
 
@@ -39,7 +39,7 @@ def get_pagerduty_session():
         raise HTTPException(status_code=500, detail="Missing PagerDuty API token")
     return APISession(token)  # Reverted to pdpyras.APISession
 
-from msteamuat.tools.redis_client import cache_get, cache_set, cache_delete
+from msteamdev.tools.redis_client import cache_get, cache_set, cache_delete
 
 def find_incident_by_number(session, incident_number: str):
     """
@@ -257,4 +257,4 @@ async def call_acknowledge_incident(req_id, args):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=6006, log_level="info")
+    uvicorn.run(app, host="0.0.0.0", port=7006, log_level="info")

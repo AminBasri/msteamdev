@@ -1,4 +1,4 @@
-# src/msteamuat/models.py
+# src/msteamdev/models.py
 
 import os
 from typing import Annotated, List, Optional
