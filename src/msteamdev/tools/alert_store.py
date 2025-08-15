@@ -229,3 +229,162 @@ async def get_matching_alerts(title: str, severity: str, hours: int = 24) -> lis
             matching_alerts.append(alert)
 
     return matching_alerts
+
+# Synchronous versions for CrewAI tools (following their pattern)
+def load_log_sync():
+    """Load alerts from alert_log.json synchronously."""
+    logging.info("Loading alert log from file: %s", LOG_FILE)
+    try:
+        with open(LOG_FILE, "r") as f:
+            return [json.loads(line) for line in f if line.strip()]
+    except FileNotFoundError:
+        return []
+
+def load_escalation_log_sync():
+    """Load escalation events from escalation_log.json synchronously."""
+    logging.info("Loading escalation log from file: %s", ESCALATION_LOG_FILE)
+    try:
+        with open(ESCALATION_LOG_FILE, "r") as f:
+            return [json.loads(line) for line in f if line.strip()]
+    except FileNotFoundError:
+        return []
+
+def save_log_sync(data):
+    """Save alert to alert_log.json synchronously, avoiding duplicates."""
+    alerts = load_log_sync()
+    if not any(
+        a.get('incident_number') == data['incident_number'] and
+        a.get('title') == data['title'] and
+        a.get('status') == data['status'] and
+        a.get('timestamp') == data['timestamp']
+        for a in alerts
+    ):
+        with open(LOG_FILE, "a") as f:
+            f.write(json.dumps(data) + "\n")
+
+def save_escalation_log_sync(data):
+    """Save escalation event to escalation_log.json synchronously, avoiding duplicates."""
+    escalations = load_escalation_log_sync()
+    if not any(
+        e.get('incident_number') == data['incident_number'] and
+        e.get('timestamp') == data['timestamp']
+        for e in escalations
+    ):
+        with open(ESCALATION_LOG_FILE, "a") as f:
+            f.write(json.dumps(data) + "\n")
+
+def check_escalation_eligibility_sync(current_alert):
+    """Determine if the alert should be escalated synchronously (for CrewAI tools)."""
+    alerts = load_log_sync()
+    escalations = load_escalation_log_sync()
+
+    # Define current time and threshold
+    current_time = datetime.fromisoformat(current_alert["timestamp"].replace("Z", "+00:00"))
+    threshold = 5 if current_alert["severity"] == "warning" else 3
+
+    # Check for recent escalations within threshold
+    recent_escalations = [
+        escalation
+        for escalation in escalations
+        if (escalation["title"] == current_alert["title"] and
+            escalation["severity"] == current_alert["severity"] and
+            escalation.get("escalated", False) and
+            0 <= (current_time - datetime.fromisoformat(escalation["timestamp"].replace("Z", "+00:00"))).days <= threshold)
+    ]
+    if recent_escalations:
+        recent_lines = [
+            f"     - Incident {e['incident_number']}: Escalated on {e['timestamp']} "
+            f"({(current_time - datetime.fromisoformat(e['timestamp'].replace('Z', '+00:00'))).days} day(s) ago)"
+            for e in recent_escalations
+        ]
+        recent_summary = "\n".join(recent_lines)
+        save_log_sync(current_alert)
+        return False, (
+            f"🚫 Alert suppressed:\n"
+            f"- Title: {current_alert['title']}\n"
+            f"- Severity: {current_alert['severity']}\n"
+            f"- Incident: {current_alert['incident_number']}\n"
+            f"- Current Timestamp: {current_alert['timestamp']}\n"
+            f"- Suppression threshold: {threshold} weekdays\n"
+            f"- Recent escalation(s) within {threshold} days:\n{recent_summary}\n"
+            f"- Decision: Do NOT escalate due to recent escalation."
+        )
+
+    # Find matching triggered alerts (excluding current alert)
+    matching_alerts = [
+        alert
+        for alert in alerts
+        if (alert["title"] == current_alert["title"] and
+            alert["severity"] == current_alert["severity"] and
+            alert["status"] == "triggered" and
+            alert["incident_number"] != current_alert["incident_number"])
+    ]
+    if current_alert["status"] == "triggered":
+        matching_alerts.append(current_alert)
+
+    if matching_alerts:
+        matching_alerts.sort(key=lambda x: x["timestamp"])
+        earliest_alert = matching_alerts[0]
+        latest_alert = matching_alerts[-1]
+        earliest_time = datetime.fromisoformat(earliest_alert["timestamp"].replace("Z", "+00:00"))
+        latest_time = datetime.fromisoformat(latest_alert["timestamp"].replace("Z", "+00:00"))
+        span_days = count_weekdays(earliest_time, latest_time)
+
+        history_lines = [
+            f"     - Incident {a['incident_number']}: Triggered on {a['timestamp']} "
+            f"({(current_time - datetime.fromisoformat(a['timestamp'].replace('Z', '+00:00'))).days} day(s) ago)"
+            for a in matching_alerts
+        ]
+        history_summary = "\n".join(history_lines)
+
+        if span_days > threshold:
+            # Save escalation event with the reason
+            reason_for_escalation = (
+                f"🔺 Escalation allowed:\n"
+                f"- Title: {current_alert['title']}\n"
+                f"- Severity: {current_alert['severity']}\n"
+                f"- Incident: {current_alert['incident_number']}\n"
+                f"- Current Timestamp: {current_alert['timestamp']}\n"
+                f"- Suppression threshold: {threshold} weekdays\n"
+                f"- Matching alerts span: {span_days} weekdays (from {earliest_alert['timestamp']} to {latest_alert['timestamp']})\n"
+                f"- Note: Ages below are in total days, while span is in weekdays.\n"
+                f"- Matching alert(s):\n{history_summary}\n"
+                f"- Decision: Escalate."
+            )
+            escalation_entry = {
+                "incident_number": current_alert["incident_number"],
+                "title": current_alert["title"],
+                "severity": current_alert["severity"],
+                "timestamp": current_alert["timestamp"],
+                "escalated": True,
+                "reason": reason_for_escalation
+            }
+            save_log_sync(current_alert)
+            save_escalation_log_sync(escalation_entry)
+            return True, reason_for_escalation
+        else:
+            save_log_sync(current_alert)
+            return False, (
+                f"🚫 Alert suppressed:\n"
+                f"- Title: {current_alert['title']}\n"
+                f"- Severity: {current_alert['severity']}\n"
+                f"- Incident: {current_alert['incident_number']}\n"
+                f"- Current Timestamp: {current_alert['timestamp']}\n"
+                f"- Suppression threshold: {threshold} weekdays\n"
+                f"- Matching alerts span: {span_days} weekdays (from {earliest_alert['timestamp']} to {latest_alert['timestamp']})\n"
+                f"- Note: Ages below are in total days, while span is in weekdays.\n"
+                f"- Matching alert(s):\n{history_summary}\n"
+                f"- Decision: Do NOT escalate."
+            )
+    else:
+        save_log_sync(current_alert)
+        return True, (
+            f"🔺 Escalation allowed:\n"
+            f"- Title: {current_alert['title']}\n"
+            f"- Severity: {current_alert['severity']}\n"
+            f"- Incident: {current_alert['incident_number']}\n"
+            f"- Current Timestamp: {current_alert['timestamp']}\n"
+            f"- Suppression threshold: {threshold} weekdays\n"
+            f"- No matching triggered alerts found.\n"
+            f"- Decision: Escalate."
+        )

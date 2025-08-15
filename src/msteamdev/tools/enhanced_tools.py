@@ -1,6 +1,5 @@
 import json
 import logging
-import asyncio
 from typing import Any, Dict, List, Optional, Union
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache, wraps
@@ -10,8 +9,6 @@ from pydantic import BaseModel, Field
 
 from msteamdev.models import AlertMatchCriteria, GetMatchingAlertsInput
 from msteamdev.tools.redis_client import cache_get, cache_set, cache_delete, cache_set_add, cache_set_is_member, cache_set_remove
-from msteamdev.tools.redis_client import cache_get_sync, cache_set_sync, cache_delete_sync
-from msteamdev.tools.redis_client import redis_client
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +69,7 @@ def with_tool_metrics(tool_name: str):
 
 @tool("ReadAlertLogEnhanced")
 @with_tool_metrics("ReadAlertLogEnhanced")
-async def read_alert_log_enhanced(
+def read_alert_log_enhanced(
     limit: int = 100,
     severity_filter: Optional[str] = None,
     time_window_hours: Optional[int] = None
@@ -91,13 +88,13 @@ async def read_alert_log_enhanced(
     try:
         # Try cache first
         cache_key = f"read_alert_log_enhanced:{limit}:{severity_filter}:{time_window_hours}"
-        cached_result = await cache_get(cache_key)
+        cached_result = cache_get(cache_key)
         if cached_result is not None:
             logger.debug(f"Returning cached alert log: {cache_key}")
             return json.dumps(cached_result, indent=2)
         
-        from msteamdev.tools.alert_store import _load_log
-        alerts = await _load_log()
+        from msteamdev.tools.alert_store import load_log_sync
+        alerts = load_log_sync()
         
         # Apply time filter if specified
         if time_window_hours:
@@ -118,7 +115,7 @@ async def read_alert_log_enhanced(
         alerts = alerts[-limit:] if limit > 0 else alerts
         
         # Cache result for 5 minutes
-        await cache_set(cache_key, alerts, ex=300)
+        cache_set(cache_key, alerts, ex=300)
         
         return json.dumps(alerts, indent=2)
         
@@ -158,21 +155,13 @@ def get_matching_alerts_enhanced(criteria_input: Union[str, GetMatchingAlertsInp
         
         # Create cache key based on criteria
         cache_key = f"matching_alerts:{hash(str(criteria.dict()))}"
-        cached_result = cache_get_sync(cache_key)
+        cached_result = cache_get(cache_key)
         if cached_result is not None:
             logger.debug(f"Returning cached matching alerts: {cache_key}")
             return json.dumps(cached_result, indent=2)
         
-        from msteamdev.tools.alert_store import _load_log
-        try:
-            import asyncio
-            loop = asyncio.get_event_loop()
-            alerts = loop.run_until_complete(_load_log())
-        except RuntimeError:
-            # Create new event loop if none exists
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            alerts = loop.run_until_complete(_load_log())
+        from msteamdev.tools.alert_store import load_log_sync
+        alerts = load_log_sync()
         
         matching_alerts = []
         for alert in alerts:
@@ -201,7 +190,7 @@ def get_matching_alerts_enhanced(criteria_input: Union[str, GetMatchingAlertsInp
         }
         
         # Cache for 10 minutes
-        cache_set_sync(cache_key, analysis, ttl_seconds=600)
+        cache_set(cache_key, analysis, ttl_seconds=600)
         
         return json.dumps(analysis, indent=2)
         
@@ -239,7 +228,7 @@ def check_escalation_eligibility_enhanced(
             timestamp = data.get('timestamp')
             status = data.get('status')
 
-        from msteamdev.tools.alert_store import check_escalation_eligibility
+        from msteamdev.tools.alert_store import check_escalation_eligibility_sync
         
         # Create alert dict for existing function
         alert = {
@@ -250,16 +239,8 @@ def check_escalation_eligibility_enhanced(
             "status": status
         }
         
-        # Handle async function call
-        try:
-            import asyncio
-            loop = asyncio.get_event_loop()
-            eligible, reason = loop.run_until_complete(check_escalation_eligibility(alert))
-        except RuntimeError:
-            # Create new event loop if none exists
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            eligible, reason = loop.run_until_complete(check_escalation_eligibility(alert))
+        # Use sync function call
+        eligible, reason = check_escalation_eligibility_sync(alert)
         
         # Enhanced analysis
         analysis = {
@@ -293,20 +274,12 @@ def get_alert_trends(hours: int = 24) -> str:
     """
     try:
         cache_key = f"alert_trends:{hours}"
-        cached_result = cache_get_sync(cache_key)
+        cached_result = cache_get(cache_key)
         if cached_result is not None:
             return json.dumps(cached_result, indent=2)
         
-        from msteamdev.tools.alert_store import _load_log
-        try:
-            import asyncio
-            loop = asyncio.get_event_loop()
-            alerts = loop.run_until_complete(_load_log())
-        except RuntimeError:
-            # Create new event loop if none exists
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            alerts = loop.run_until_complete(_load_log())
+        from msteamdev.tools.alert_store import load_log_sync
+        alerts = load_log_sync()
         
         cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
         recent_alerts = [
@@ -326,7 +299,7 @@ def get_alert_trends(hours: int = 24) -> str:
         }
         
         # Cache for 15 minutes
-        cache_set_sync(cache_key, trends, ttl_seconds=900)
+        cache_set(cache_key, trends, ttl_seconds=900)
         
         return json.dumps(trends, indent=2)
         
@@ -414,15 +387,8 @@ def _get_detailed_escalation_analysis(alert: Dict) -> Dict[str, Any]:
 def _count_similar_alerts(alert: Dict) -> int:
     """Count similar alerts in recent history."""
     try:
-        from msteamdev.tools.alert_store import _load_log
-        try:
-            import asyncio
-            loop = asyncio.get_event_loop()
-            alerts = loop.run_until_complete(_load_log())
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            alerts = loop.run_until_complete(_load_log())
+        from msteamdev.tools.alert_store import load_log_sync
+        alerts = load_log_sync()
         
         cutoff = datetime.now(timezone.utc) - timedelta(days=1)
         similar_count = 0
@@ -507,9 +473,9 @@ def _check_redis_health() -> Dict[str, Any]:
     try:
         # Simple ping test
         test_key = "health_check_test"
-        cache_set_sync(test_key, "test", ttl_seconds=10)
-        result = cache_get_sync(test_key)
-        cache_delete_sync(test_key)
+        cache_set(test_key, "test", ttl_seconds=10)
+        result = cache_get(test_key)
+        cache_delete(test_key)
         
         return {
             "status": "healthy" if result == "test" else "degraded",
@@ -542,15 +508,8 @@ def _get_active_alerts_count() -> int:
 def _get_active_alerts_count_sync() -> int:
     """Get count of active alerts synchronously."""
     try:
-        from msteamdev.tools.alert_store import _load_log
-        try:
-            import asyncio
-            loop = asyncio.get_event_loop()
-            alerts = loop.run_until_complete(_load_log())
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            alerts = loop.run_until_complete(_load_log())
+        from msteamdev.tools.alert_store import load_log_sync
+        alerts = load_log_sync()
         return sum(1 for alert in alerts if alert.get("status", "").lower() in ["triggered", "acknowledged"])
     except Exception as e:
         logger.debug(f"Failed to get active alerts count: {e}")
@@ -609,15 +568,8 @@ def _get_time_factor(timestamp: str) -> str:
 def _count_recent_similar(alert: Dict) -> int:
     """Count recent similar alerts."""
     try:
-        from msteamdev.tools.alert_store import _load_log
-        try:
-            import asyncio
-            loop = asyncio.get_event_loop()
-            alerts = loop.run_until_complete(_load_log())
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            alerts = loop.run_until_complete(_load_log())
+        from msteamdev.tools.alert_store import load_log_sync
+        alerts = load_log_sync()
         
         cutoff = datetime.now(timezone.utc) - timedelta(hours=6)
         count = 0
