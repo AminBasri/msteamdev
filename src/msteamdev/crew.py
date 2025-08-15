@@ -1,6 +1,4 @@
 # Enhanced crew.py - Core Engine with Preserved Logic + Performance Improvements
-# Based on your recent updates - maintains 100% compatibility
-
 import os
 import sys
 import yaml
