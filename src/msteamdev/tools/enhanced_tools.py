@@ -96,7 +96,7 @@ async def read_alert_log_enhanced(
             return json.dumps(cached_result, indent=2)
         
         from msteamdev.tools.alert_store import _load_log
-        alerts = await asyncio.to_thread(_load_log)
+        alerts = await _load_log()
         
         # Apply time filter if specified
         if time_window_hours:
@@ -163,7 +163,15 @@ def get_matching_alerts_enhanced(criteria_input: Union[str, GetMatchingAlertsInp
             return json.dumps(cached_result, indent=2)
         
         from msteamdev.tools.alert_store import _load_log
-        alerts = _load_log()
+        try:
+            import asyncio
+            loop = asyncio.get_event_loop()
+            alerts = loop.run_until_complete(_load_log())
+        except RuntimeError:
+            # Create new event loop if none exists
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            alerts = loop.run_until_complete(_load_log())
         
         matching_alerts = []
         for alert in alerts:
@@ -241,7 +249,16 @@ def check_escalation_eligibility_enhanced(
             "status": status
         }
         
-        eligible, reason = check_escalation_eligibility(alert)
+        # Handle async function call
+        try:
+            import asyncio
+            loop = asyncio.get_event_loop()
+            eligible, reason = loop.run_until_complete(check_escalation_eligibility(alert))
+        except RuntimeError:
+            # Create new event loop if none exists
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            eligible, reason = loop.run_until_complete(check_escalation_eligibility(alert))
         
         # Enhanced analysis
         analysis = {
@@ -280,7 +297,15 @@ def get_alert_trends(hours: int = 24) -> str:
             return json.dumps(cached_result, indent=2)
         
         from msteamdev.tools.alert_store import _load_log
-        alerts = _load_log()
+        try:
+            import asyncio
+            loop = asyncio.get_event_loop()
+            alerts = loop.run_until_complete(_load_log())
+        except RuntimeError:
+            # Create new event loop if none exists
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            alerts = loop.run_until_complete(_load_log())
         
         cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
         recent_alerts = [
@@ -323,7 +348,7 @@ def get_system_health() -> str:
             "redis_status": _check_redis_health(),
             "mcp_server_status": _check_mcp_health(),
             "tool_metrics": tool_metrics.get_stats(),
-            "active_alerts_count": _get_active_alerts_count(),
+            "active_alerts_count": _get_active_alerts_count_sync(),
             "processing_queue_size": _get_processing_queue_size(),
             "system_uptime": _get_system_uptime()
         }
@@ -389,7 +414,14 @@ def _count_similar_alerts(alert: Dict) -> int:
     """Count similar alerts in recent history."""
     try:
         from msteamdev.tools.alert_store import _load_log
-        alerts = _load_log()
+        try:
+            import asyncio
+            loop = asyncio.get_event_loop()
+            alerts = loop.run_until_complete(_load_log())
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            alerts = loop.run_until_complete(_load_log())
         
         cutoff = datetime.now(timezone.utc) - timedelta(days=1)
         similar_count = 0
@@ -504,6 +536,23 @@ def _get_active_alerts_count() -> int:
         alerts = _load_log()
         return sum(1 for alert in alerts if alert.get("status", "").lower() in ["triggered", "acknowledged"])
     except:
+        return 0
+
+def _get_active_alerts_count_sync() -> int:
+    """Get count of active alerts synchronously."""
+    try:
+        from msteamdev.tools.alert_store import _load_log
+        try:
+            import asyncio
+            loop = asyncio.get_event_loop()
+            alerts = loop.run_until_complete(_load_log())
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            alerts = loop.run_until_complete(_load_log())
+        return sum(1 for alert in alerts if alert.get("status", "").lower() in ["triggered", "acknowledged"])
+    except Exception as e:
+        logger.debug(f"Failed to get active alerts count: {e}")
         return 0
 
 def _get_processing_queue_size() -> int:
