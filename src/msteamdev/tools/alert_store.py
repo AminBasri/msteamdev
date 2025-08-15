@@ -111,7 +111,7 @@ async def check_escalation_eligibility(current_alert):
             for e in recent_escalations
         ]
         recent_summary = "\n".join(recent_lines)
-        _save_log(current_alert)
+        await _save_log(current_alert)
         return False, (
             f"🚫 Alert suppressed:\n"
             f"- Title: {current_alert['title']}\n"
@@ -172,11 +172,11 @@ async def check_escalation_eligibility(current_alert):
                 "escalated": True,
                 "reason": reason_for_escalation
             }
-            _save_log(current_alert)
-            _save_escalation_log(escalation_entry)
+            await _save_log(current_alert)
+            await _save_escalation_log(escalation_entry)
             return True, reason_for_escalation
         else:
-            _save_log(current_alert)
+            await _save_log(current_alert)
             return False, (
                 f"🚫 Alert suppressed:\n"
                 f"- Title: {current_alert['title']}\n"
@@ -190,7 +190,7 @@ async def check_escalation_eligibility(current_alert):
                 f"- Decision: Do NOT escalate."
             )
     else:
-        _save_log(current_alert)
+        await _save_log(current_alert)
         return True, (
             f"🔺 Escalation allowed:\n"
             f"- Title: {current_alert['title']}\n"

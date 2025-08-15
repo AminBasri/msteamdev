@@ -87,8 +87,13 @@ class TestEnhancedToolsDirect:
     
     def test_read_alert_log_enhanced(self, enhanced_tools, suppress_warnings):
         """Test ReadAlertLogEnhanced function."""
-        # Use run method to execute the tool
-        result = enhanced_tools['read_alert_log_enhanced']._run(limit=5, severity_filter="critical")
+        import asyncio
+        # Handle async tool execution
+        coro = enhanced_tools['read_alert_log_enhanced']._run(limit=5, severity_filter="critical")
+        if asyncio.iscoroutine(coro):
+            result = asyncio.run(coro)
+        else:
+            result = coro
         assert isinstance(result, str)
         assert len(result) > 0
         # Should return valid JSON or error message
@@ -150,11 +155,16 @@ class TestEnhancedToolsDirect:
     
     def test_tool_metrics_tracking(self, enhanced_tools, suppress_warnings):
         """Test that tool metrics are properly tracked."""
+        import asyncio
         # Get initial stats
         initial_stats = enhanced_tools['tool_metrics'].get_stats()
         
         # Trigger a tool call
-        enhanced_tools['read_alert_log_enhanced']._run(limit=1)
+        coro = enhanced_tools['read_alert_log_enhanced']._run(limit=1)
+        if asyncio.iscoroutine(coro):
+            asyncio.run(coro)
+        else:
+            coro  # Execute if not coroutine
         
         # Check updated stats
         updated_stats = enhanced_tools['tool_metrics'].get_stats()
@@ -259,11 +269,16 @@ class TestSystemHealth:
     
     def test_enhanced_tools_metrics_integration(self, crew, enhanced_tools, suppress_warnings):
         """Test that enhanced tools metrics are integrated in system health."""
+        import asyncio
         if crew is None:
             pytest.skip("Crew enhanced not available")
             
         # Trigger some tool usage first
-        enhanced_tools['read_alert_log_enhanced']._run(limit=1)
+        coro = enhanced_tools['read_alert_log_enhanced']._run(limit=1)
+        if asyncio.iscoroutine(coro):
+            asyncio.run(coro)
+        else:
+            coro  # Execute if not coroutine
         
         health_report = crew['get_system_health']()
         

@@ -609,7 +609,14 @@ def _count_recent_similar(alert: Dict) -> int:
     """Count recent similar alerts."""
     try:
         from msteamdev.tools.alert_store import _load_log
-        alerts = _load_log()
+        try:
+            import asyncio
+            loop = asyncio.get_event_loop()
+            alerts = loop.run_until_complete(_load_log())
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            alerts = loop.run_until_complete(_load_log())
         
         cutoff = datetime.now(timezone.utc) - timedelta(hours=6)
         count = 0
@@ -624,7 +631,8 @@ def _count_recent_similar(alert: Dict) -> int:
                 continue
         
         return count
-    except:
+    except Exception as e:
+        logger.debug(f"Failed to count recent similar alerts: {e}")
         return 0
 
 def _get_escalation_recommendation(alert: Dict) -> str:
