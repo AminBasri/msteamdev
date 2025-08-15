@@ -23,7 +23,9 @@ dependencies = [
     "wheel",
     "mcpadapt",
     "redis",
-    "openlit"
+    "openlit",
+    "pytest",
+    "pytest-asyncio"
 ]
 
 [project.scripts]
