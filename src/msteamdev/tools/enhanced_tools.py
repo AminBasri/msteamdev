@@ -125,31 +125,35 @@ def read_alert_log_enhanced(
 
 @tool("GetMatchingAlertsEnhanced")
 @with_tool_metrics("GetMatchingAlertsEnhanced")
-def get_matching_alerts_enhanced(criteria_input: Union[str, GetMatchingAlertsInput]) -> str:
+def get_matching_alerts_enhanced(criteria_input: Union[str, Dict, GetMatchingAlertsInput]) -> str:
     """
     Find alerts matching specific criteria with enhanced pattern matching.
     
     Args:
-        criteria_input: Matching criteria (title, severity, metric, status)
+        criteria_input: Matching criteria (title, severity, metric, status), can be a dict, JSON string, or GetMatchingAlertsInput object.
     
     Returns:
         JSON string of matching alerts with analysis
     """
     try:
-        if isinstance(criteria_input, str):
+        if isinstance(criteria_input, GetMatchingAlertsInput):
+            pass  # Already in the correct format
+        elif isinstance(criteria_input, str):
             try:
                 # If the input is a string, try to parse it as JSON
                 parsed_input = json.loads(criteria_input)
-                # The actual criteria might be nested, adjust as necessary based on observed AI behavior
-                if "criteria_input" in parsed_input:
-                    criteria_input = GetMatchingAlertsInput(**parsed_input["criteria_input"])
-                else:
+                if "alert" in parsed_input:
                     criteria_input = GetMatchingAlertsInput(**parsed_input)
-            except (json.JSONDecodeError, TypeError) as e:
-                # Fallback for malformed JSON or direct non-JSON string
-                # This part may need adjustment based on how the AI formats the string
-                # For now, we'll assume it's a simple string representing a title or metric
+                else:
+                    criteria_input = GetMatchingAlertsInput(alert=AlertMatchCriteria(**parsed_input))
+            except (json.JSONDecodeError, TypeError):
+                # Fallback for a simple string (assume it's a title)
                 criteria_input = GetMatchingAlertsInput(alert=AlertMatchCriteria(title=criteria_input))
+        elif isinstance(criteria_input, dict):
+            if "alert" in criteria_input:
+                criteria_input = GetMatchingAlertsInput(**criteria_input)
+            else:
+                criteria_input = GetMatchingAlertsInput(alert=AlertMatchCriteria(**criteria_input))
 
         criteria = criteria_input.alert
         

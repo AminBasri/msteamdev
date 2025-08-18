@@ -32,125 +32,24 @@ from msteamdev.tools.enhanced_tools import (
 )
 from crewai_tools import FileReadTool
 
-# Initialize OpenLit for telemetry
-openlit.init()
-
-# ENHANCED: Performance and Error Tracking
-class CrewPerformanceMonitor:
-    """Enhanced performance monitoring without disrupting existing flow."""
-    
-    def __init__(self):
-        self.processing_stats = {
-            "total_processed": 0,
-            "successful": 0,
-            "failed": 0,
-            "escalated": 0,
-            "suppressed": 0,
-            "fallback_used": 0,
-            "avg_processing_time": 0,
-            "processing_times": []
-        }
-        self.agent_stats = {}
-        self.error_patterns = {}
-    
-    def record_processing(self, incident_number: str, duration: float, status: str, agent_used: str = None):
-        """Record processing metrics."""
-        self.processing_stats["total_processed"] += 1
-        self.processing_stats["processing_times"].append(duration)
-        
-        # Keep only last 100 processing times for memory efficiency
-        if len(self.processing_stats["processing_times"]) > 100:
-            self.processing_stats["processing_times"] = self.processing_stats["processing_times"][-100:]
-        
-        # Update average
-        self.processing_stats["avg_processing_time"] = sum(self.processing_stats["processing_times"]) / len(self.processing_stats["processing_times"])
-        
-        # Status tracking
-        if status in self.processing_stats:
-            self.processing_stats[status] += 1
-        
-        # Agent performance tracking
-        if agent_used:
-            if agent_used not in self.agent_stats:
-                self.agent_stats[agent_used] = {"calls": 0, "successes": 0, "avg_time": 0, "times": []}
-            
-            self.agent_stats[agent_used]["calls"] += 1
-            self.agent_stats[agent_used]["times"].append(duration)
-            if status == "successful":
-                self.agent_stats[agent_used]["successes"] += 1
-            
-            # Update agent average time
-            self.agent_stats[agent_used]["avg_time"] = sum(self.agent_stats[agent_used]["times"]) / len(self.agent_stats[agent_used]["times"])
-    
-    def record_error_pattern(self, error_type: str, incident_number: str):
-        """Track error patterns for analysis."""
-        if error_type not in self.error_patterns:
-            self.error_patterns[error_type] = {"count": 0, "recent_incidents": []}
-        
-        self.error_patterns[error_type]["count"] += 1
-        self.error_patterns[error_type]["recent_incidents"].append({
-            "incident": incident_number,
-            "timestamp": datetime.now(timezone.utc).isoformat()
-        })
-        
-        # Keep only last 20 incidents per error type
-        if len(self.error_patterns[error_type]["recent_incidents"]) > 20:
-            self.error_patterns[error_type]["recent_incidents"] = self.error_patterns[error_type]["recent_incidents"][-20:]
-    
-    def get_health_report(self) -> dict:
-        """Generate health report."""
-        total = self.processing_stats["total_processed"]
-        success_rate = (self.processing_stats["successful"] / total * 100) if total > 0 else 0
-        
-        return {
-            "processing_stats": self.processing_stats.copy(),
-            "success_rate_percent": round(success_rate, 2),
-            "agent_performance": self.agent_stats.copy(),
-            "error_patterns": self.error_patterns.copy(),
-            "system_health": "healthy" if success_rate > 80 else "degraded" if success_rate > 50 else "critical"
-        }
-
-# Global performance monitor
-performance_monitor = CrewPerformanceMonitor()
-
-# PRESERVE YOUR EXISTING Tee class and logging setup
-class Tee(object):
-    def __init__(self, *files):
-        self.files = files
-    def write(self, obj):
-        for f in self.files:
-            f.write(obj)
-            f.flush()  # Ensure each write is flushed
-    def flush(self):
-        for f in self.files:
-            f.flush()
-
-# Create a log directory if it doesn't exist
+# Simplified logging setup
 log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'log')
 os.makedirs(log_dir, exist_ok=True)
 log_file_path = os.path.join(log_dir, 'crew.log')
 
-# Create a log file and Tee object
-log_file = open(log_file_path, 'a')
-original_stdout = sys.stdout
-original_stderr = sys.stderr
-sys.stdout = Tee(original_stdout, log_file)
-sys.stderr = Tee(original_stderr, log_file)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(log_file_path),
+        logging.StreamHandler(sys.stdout)
+    ]
+)
 
-logger = logging.getLogger('crew')
-logger.setLevel(logging.INFO)
-logger.propagate = False
-logger.handlers.clear()
+logger = logging.getLogger(__name__)
 
-# Add FileHandler for crew.log
-file_handler = logging.FileHandler(log_file_path)
-file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-logger.addHandler(file_handler)
-
-# Add StreamHandler for console output
-stream_handler = logging.StreamHandler(original_stdout)
-stream_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-logger.addHandler(stream_handler)
+# Initialize OpenLit for telemetry
+openlit.init()
 
 MCP_SERVER_URL = os.getenv("MCP_SERVER_URL", "http://localhost:6006/mcp")
 from_email = os.getenv("SENDER_EMAIL", "noramin@infopro.com.my")
@@ -778,7 +677,7 @@ if __name__ == "__main__":
         "status": "triggered",
         "from_email": "noramin@infopro.com.my"
     }
-    print("Running enhanced pipeline directly for testing...")
+    logger.info("Running enhanced pipeline directly for testing...")
     asyncio.run(_run_alert_pipeline_async(alert))
-    print("Enhanced pipeline test run finished.")
-    print(f"System health: {get_system_health()}")
+    logger.info("Enhanced pipeline test run finished.")
+    logger.info(f"System health: {get_system_health()}")
