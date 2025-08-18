@@ -6,7 +6,7 @@ import time
 import warnings
 from datetime import datetime, timezone
 
-from msteamuat.crew import start_alert_pipeline
+from msteamdev.crew import start_alert_pipeline
 
 warnings.filterwarnings("ignore", category=SyntaxWarning, module="pydantic_core")
 warnings.filterwarnings("ignore", category=UserWarning, module="crewai.task")
@@ -36,7 +36,7 @@ def main():
     """
     Main function to run the crew from the command line.
     """
-    parser = argparse.ArgumentParser(description="Run the Msteamuat Crew.")
+    parser = argparse.ArgumentParser(description="Run the msteamdev Crew.")
     parser.add_argument(
         "command",
         choices=["run", "test"],

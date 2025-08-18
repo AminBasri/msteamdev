@@ -524,7 +524,7 @@ async def run_escalation_pipeline(alert: dict, mcp_tools: list):
         delay_minutes = int(os.getenv("ESCALATION_DELAY_MINUTES", "3"))
         if await check_resolution_status(alert, delay_minutes):
             logger.info(f"✅ Alert with incident #{incident_number} resolved before escalation")
-            await cache_set_remove(ESCALATION_SET_NAME, incident_number)
+            cache_set_remove(ESCALATION_SET_NAME, incident_number)
             
             # ENHANCED: Record resolved status
             duration = time.time() - start_time
@@ -539,7 +539,7 @@ async def run_escalation_pipeline(alert: dict, mcp_tools: list):
 
         if not escalation_agent or not communicator_agent:
             logger.error("Missing required agents")
-            await cache_set_remove(ESCALATION_SET_NAME, incident_number)
+            cache_set_remove(ESCALATION_SET_NAME, incident_number)
             
             # ENHANCED: Record agent failure
             duration = time.time() - start_time
@@ -607,7 +607,7 @@ async def run_escalation_pipeline(alert: dict, mcp_tools: list):
                 final_reason = comm_response if should_send_email else reason
                 send_notification(alert, final_reason)
                 logger.info(f"✅ Email sent to BAU for incident {incident_number}")
-                await cache_set_remove(ESCALATION_SET_NAME, incident_number)
+                cache_set_remove(ESCALATION_SET_NAME, incident_number)
                 
                 # ENHANCED: Record escalation success
                 duration = time.time() - start_time
@@ -616,7 +616,7 @@ async def run_escalation_pipeline(alert: dict, mcp_tools: list):
                 return {"status": "escalated", "message": "Email sent to BAU successfully"}
             except Exception as email_error:
                 logger.error(f"❌ Failed to send email for incident {incident_number}: {email_error}")
-                await cache_set_remove(ESCALATION_SET_NAME, incident_number)
+                cache_set_remove(ESCALATION_SET_NAME, incident_number)
                 
                 # ENHANCED: Record email failure
                 duration = time.time() - start_time
@@ -626,7 +626,7 @@ async def run_escalation_pipeline(alert: dict, mcp_tools: list):
                 return {"status": "error", "message": f"Failed to send email: {str(email_error)}"}
         else:
             logger.info(f"ℹ️ Escalation not approved for incident {incident_number} by AI and policy check failed")
-            await cache_set_remove(ESCALATION_SET_NAME, incident_number)
+            cache_set_remove(ESCALATION_SET_NAME, incident_number)
             
             # ENHANCED: Record suppression
             duration = time.time() - start_time
@@ -641,7 +641,7 @@ async def run_escalation_pipeline(alert: dict, mcp_tools: list):
             try:
                 send_notification(alert, f"Crew execution failed but policy indicates escalation: {reason}")
                 logger.info(f"✅ Fallback email sent for incident {incident_number}")
-                await cache_set_remove(ESCALATION_SET_NAME, incident_number)
+                cache_set_remove(ESCALATION_SET_NAME, incident_number)
                 
                 # ENHANCED: Record fallback escalation
                 duration = time.time() - start_time
@@ -650,7 +650,7 @@ async def run_escalation_pipeline(alert: dict, mcp_tools: list):
                 return {"status": "escalated", "message": "Fallback email sent successfully"}
             except Exception as fallback_error:
                 logger.error(f"❌ Fallback email failed for incident {incident_number}: {fallback_error}")
-                await cache_set_remove(ESCALATION_SET_NAME, incident_number)
+                cache_set_remove(ESCALATION_SET_NAME, incident_number)
                 
                 # ENHANCED: Record complete failure
                 duration = time.time() - start_time
@@ -658,7 +658,7 @@ async def run_escalation_pipeline(alert: dict, mcp_tools: list):
                 performance_monitor.record_error_pattern("Complete_Pipeline_Failure", incident_number)
                 
                 return {"status": "error", "message": f"Fallback email failed: {str(fallback_error)}"}
-        await cache_set_remove(ESCALATION_SET_NAME, incident_number)
+        cache_set_remove(ESCALATION_SET_NAME, incident_number)
         
         # ENHANCED: Record pipeline failure
         duration = time.time() - start_time
@@ -676,7 +676,7 @@ async def _run_alert_pipeline_async(alert: dict, mcp_tools: list = None):
     try:
         mcp_tools = mcp_tools or get_mcp_tools()
         
-        if await cache_set_is_member(ESCALATION_SET_NAME, incident_number):
+        if cache_set_is_member(ESCALATION_SET_NAME, incident_number):
             logger.info(f"Alert {incident_number} already scheduled for escalation, skipping")
             return
 
@@ -694,18 +694,8 @@ async def _run_alert_pipeline_async(alert: dict, mcp_tools: list = None):
         else:
             logger.info(f"✅ Alert #{incident_number} is already resolved. Skipping acknowledgment scheduling.")
 
-        delay = (occurred_at + timedelta(minutes=delay_minutes)) - now
-        seconds = max(0, delay.total_seconds())
-        
-        logger.info(f"⏱ Holding alert {incident_number} for {int(seconds)} seconds before escalation decision")
-
-        if alert["status"] == "triggered":
-            asyncio.create_task(check_and_acknowledge_alert_task(alert, mcp_tools))
-            logger.info(f"⏳ Scheduled acknowledgment check for incident {incident_number}")
-        else:
-            logger.info(f"✅ Alert #{incident_number} is already resolved. Skipping acknowledgment scheduling.")
-
         await asyncio.sleep(seconds)
+        await run_escalation_pipeline(alert, mcp_tools)
 
     except Exception as e:
         logger.error(f"Error in _run_alert_pipeline_async for incident {incident_number}: {str(e)}")

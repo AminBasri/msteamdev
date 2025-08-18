@@ -51,6 +51,8 @@ TOOLS = {
     "GetSystemHealth": get_system_health,
 }
 
+import asyncio
+
 def main():
     """
     Listens for JSON-RPC requests on stdin and sends responses to stdout.
@@ -205,7 +207,10 @@ def main():
                 try:
                     mcp_logger.info(f"Executing tool: {tool_name}")
                     tool_function = TOOLS[tool_name]
-                    result = tool_function(**params)
+                    if asyncio.iscoroutinefunction(tool_function):
+                        result = asyncio.run(tool_function(**params))
+                    else:
+                        result = tool_function(**params)
                     response = {
                         "jsonrpc": "2.0",
                         "result": result,
