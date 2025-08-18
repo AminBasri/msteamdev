@@ -267,8 +267,8 @@ def load_agents(mcp_tools=None):
             verbose=True,
             llm=llm,
             tools=tools,
-            allow_delegation=cfg.get("allow_delegation", True)
-            # reasoning=cfg.get("reasoning", True),
+            allow_delegation=cfg.get("allow_delegation", True),
+            reasoning=cfg.get("reasoning", True)
         )
     
     # Update cache
