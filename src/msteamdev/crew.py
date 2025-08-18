@@ -14,12 +14,23 @@ import requests
 import openlit
 from crewai import Agent, Task, Crew, Process
 from msteamdev.llm import get_llm
-from crewai_tools import MCPServerAdapter
-from mcp import StdioServerParameters
 from msteamdev.tools.alert_store import check_escalation_eligibility, _load_log
 from crewai.tools import tool
 from pdpyras import APISession
 from msteamdev.tools.redis_client import cache_set_add, cache_set_remove, cache_set_is_member
+from msteamdev.tools.alert_store import (
+    read_alert_log,
+    read_escalation_log,
+    get_matching_alerts,
+)
+from msteamdev.tools.enhanced_tools import (
+    read_alert_log_enhanced,
+    get_matching_alerts_enhanced,
+    check_escalation_eligibility_enhanced,
+    get_alert_trends,
+    get_system_health as get_system_health_tool,
+)
+from crewai_tools import FileReadTool
 
 # Initialize OpenLit for telemetry
 openlit.init()
@@ -205,24 +216,26 @@ def acknowledge_incident(incident_number: str, from_email: str) -> str:
 def get_mcp_tools() -> list:
     """Load MCP tools with enhanced error handling."""
     logger.info("Loading MCP tools...")
-    mcp_tools = [get_incident_status, acknowledge_incident]
-
-    try:
-        # Configure StdioServerParameters for the internal MCP server
-        stdio_server_params = StdioServerParameters(
-            command=sys.executable,
-            args=[os.path.join(os.path.dirname(os.path.abspath(__file__)), "tools", "mcp_stdio_server.py")],
-            env=os.environ.copy()  # Pass current environment variables
-        )
-
-        # Use MCPServerAdapter to get tools from the Stdio MCP server
-        with MCPServerAdapter(stdio_server_params) as stdio_tools:
-            mcp_tools.extend(stdio_tools)
-            logger.info(f"Successfully loaded {len(stdio_tools)} additional MCP tools from stdio server.")
-
-    except Exception as e:
-        logger.error(f"Failed to load stdio MCP tools: {e}. Continuing with basic tools only.")
-        performance_monitor.record_error_pattern("MCP_StdioServer_LoadFailure", "system")
+    
+    # The user suggested using FileReadTool, so we'll add it.
+    # We can configure it to read the alert and escalation logs.
+    alert_log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "alert_log.json")
+    escalation_log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "escalation_log.json")
+    
+    mcp_tools = [
+        get_incident_status, 
+        acknowledge_incident,
+        read_alert_log,
+        read_escalation_log,
+        get_matching_alerts,
+        read_alert_log_enhanced,
+        get_matching_alerts_enhanced,
+        check_escalation_eligibility_enhanced,
+        get_alert_trends,
+        get_system_health_tool,
+        FileReadTool(file_path=alert_log_path, description="A tool to read the alert log file."),
+        FileReadTool(file_path=escalation_log_path, description="A tool to read the escalation log file.")
+    ]
 
     logger.info(f"Successfully loaded total {len(mcp_tools)} MCP tools.")
     return mcp_tools
