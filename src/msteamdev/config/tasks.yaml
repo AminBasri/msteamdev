@@ -9,7 +9,7 @@ recommend_actions:
   expected_output: >
     A list of up to 3 recommended actions
   agent: action_recommender
-  output_pydantic: src.msteamdev.tools.notify.RecommendedActions
+  output_pydantic: src.msteamdev.models.RecommendedActions
 
 evaluate_escalation:
   description: >
@@ -43,7 +43,7 @@ notify_bau:
     
     Draft an email message for the BAU team, or clearly state if escalation was not approved.
   agent: communicator
-  output_pydantic: src.msteamdev.tools.notify.EmailContent
+  output_pydantic: src.msteamdev.models.EmailContent
 
 shift_report:
   description: >

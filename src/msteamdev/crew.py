@@ -54,6 +54,61 @@ openlit.init()
 MCP_SERVER_URL = os.getenv("MCP_SERVER_URL", "http://localhost:6006/mcp")
 from_email = os.getenv("SENDER_EMAIL", "noramin@infopro.com.my")
 
+# Lightweight performance monitor to preserve existing logic and calls
+class _PerformanceMonitor:
+    def __init__(self):
+        self.processing_records = []
+        self.error_patterns = {}
+
+    def record_processing(self, incident_number: str, duration: float, status: str, stage: str):
+        try:
+            self.processing_records.append({
+                "incident_number": str(incident_number),
+                "duration": float(duration),
+                "status": str(status),
+                "stage": str(stage),
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            })
+        except Exception:
+            # safety: never raise from monitor
+            pass
+
+    def record_error_pattern(self, pattern_name: str, incident_number: str | None = None):
+        try:
+            key = str(pattern_name)
+            self.error_patterns[key] = self.error_patterns.get(key, 0) + 1
+        except Exception:
+            pass
+
+    def get_health_report(self) -> dict:
+        try:
+            total = len(self.processing_records)
+            by_status = {}
+            avg_duration = 0.0
+            if total:
+                total_duration = 0.0
+                for rec in self.processing_records:
+                    total_duration += rec.get("duration", 0.0)
+                    status = rec.get("status", "unknown")
+                    by_status[status] = by_status.get(status, 0) + 1
+                avg_duration = total_duration / max(total, 1)
+            return {
+                "total_operations": total,
+                "avg_duration": avg_duration,
+                "by_status": by_status,
+                "error_patterns": dict(self.error_patterns)
+            }
+        except Exception:
+            return {
+                "total_operations": 0,
+                "avg_duration": 0.0,
+                "by_status": {},
+                "error_patterns": {}
+            }
+
+# Global instance used throughout the module
+performance_monitor = _PerformanceMonitor()
+
 # PRESERVE YOUR EXISTING Tool implementations with ENHANCEMENT
 @tool("GetIncidentStatus")
 def get_incident_status(incident_number: str) -> str:
@@ -89,7 +144,7 @@ def acknowledge_incident(incident_number: str, from_email: str) -> str:
     Acknowledge a PagerDuty incident.
     Input should be the incident number and the email of the user acknowledging the incident.
     """
-    valid_from_email = os.getenv("SENDER_EMAIL", "noramin@infopro.com.my")
+    valid_from_email = from_email or os.getenv("SENDER_EMAIL", "noramin@infopro.com.my")
     jsonrpc_request = {
         "jsonrpc": "2.0",
         "method": "tools/call",
@@ -267,8 +322,7 @@ def load_agents(mcp_tools=None):
             verbose=True,
             llm=llm,
             tools=tools,
-            allow_delegation=cfg.get("allow_delegation", True),
-            reasoning=cfg.get("reasoning", True)
+            allow_delegation=cfg.get("allow_delegation", True)
         )
     
     # Update cache
@@ -333,14 +387,14 @@ async def check_and_acknowledge_alert_task(alert: dict, mcp_tools: list, max_ret
             description=task_description,
             expected_output=tasks_def["check_and_acknowledge_alert"]["expected_output"],
             agent=pagerduty_manager,
-            tools=mcp_tools,
-            async_execution=True
         )
 
         for attempt in range(max_retries):
             try:
                 with openlit.start_trace(name=f"Acknowledge_Incident_{incident_number}") as trace:
-                    result = await asyncio.to_thread(pagerduty_manager.execute_task, acknowledge_task)
+                    crew = Crew(agents=[pagerduty_manager], tasks=[acknowledge_task], verbose=True, telemetry=False)
+                    kickoff_result = await crew.kickoff_async()
+                    result = str(kickoff_result.raw or "")
                     trace.set_metadata({
                         "incident_number": incident_number,
                         "agent": "pagerduty_manager"
@@ -598,6 +652,8 @@ async def _run_alert_pipeline_async(alert: dict, mcp_tools: list = None):
         delay = (occurred_at + timedelta(minutes=delay_minutes)) - now
         seconds = max(0, delay.total_seconds())
         
+        # Mark as scheduled to prevent duplicates
+        cache_set_add(ESCALATION_SET_NAME, incident_number)
         logger.info(f"⏱ Holding alert {incident_number} for {int(seconds)} seconds before escalation decision")
 
         if alert["status"] == "triggered":

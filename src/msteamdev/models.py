@@ -35,9 +35,7 @@ class GetMatchingAlertsInput(
     """Input for GetMatchingAlerts tool."""
     alert: AlertMatchCriteria = Field(..., description="The alert criteria to match against.")
 
-class RecommendedActions(
-    BaseModel
-):
+class SimpleRecommendedActions(BaseModel):
     actions: List[str] = Field(..., min_length=1, max_length=3, description="List of recommended actions")
 
     def format_for_email(self) -> str:

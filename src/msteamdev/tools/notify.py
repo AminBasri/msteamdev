@@ -12,7 +12,7 @@ import pytz
 from datetime import datetime, timezone
 from crewai import Agent, Task, Crew
 from msteamdev.crew import load_agents, load_yaml
-from msteamdev.models import RecommendedActions, EmailContent
+from msteamdev.models import RecommendedActions, EmailContent, TechnicalAction
 from functools import wraps
 import time
 import openlit
@@ -138,9 +138,27 @@ def generate_recommended_actions(alert: Dict) -> RecommendedActions:
         if not action_recommender:
             logger.error("Missing action_recommender agent")
             return RecommendedActions(actions=[
-                f"Investigate {alert.get('metric', 'system')} usage",
-                "Check running processes and services",
-                "Document findings and resolution steps"
+                TechnicalAction(
+                    description=f"Investigate {alert.get('metric', 'system')} usage",
+                    priority_level=3,
+                    estimated_time_minutes=15,
+                    required_tools=[],
+                    success_criteria="Usage within normal thresholds"
+                ),
+                TechnicalAction(
+                    description="Check running processes and services",
+                    priority_level=3,
+                    estimated_time_minutes=10,
+                    required_tools=[],
+                    success_criteria="All critical services are running"
+                ),
+                TechnicalAction(
+                    description="Document findings and resolution steps",
+                    priority_level=2,
+                    estimated_time_minutes=5,
+                    required_tools=[],
+                    success_criteria="Notes saved to incident record"
+                )
             ])
 
         task = Task(
@@ -165,9 +183,27 @@ def generate_recommended_actions(alert: Dict) -> RecommendedActions:
     except Exception as e:
         logger.error(f"Failed to generate recommended actions for incident {alert.get('incident_number', 'N/A')}: {e}")
         return RecommendedActions(actions=[
-            f"Investigate {alert.get('metric', 'system')} usage",
-            "Check running processes and services",
-            "Document findings and resolution steps"
+            TechnicalAction(
+                description=f"Investigate {alert.get('metric', 'system')} usage",
+                priority_level=3,
+                estimated_time_minutes=15,
+                required_tools=[],
+                success_criteria="Usage within normal thresholds"
+            ),
+            TechnicalAction(
+                description="Check running processes and services",
+                priority_level=3,
+                estimated_time_minutes=10,
+                required_tools=[],
+                success_criteria="All critical services are running"
+            ),
+            TechnicalAction(
+                description="Document findings and resolution steps",
+                priority_level=2,
+                estimated_time_minutes=5,
+                required_tools=[],
+                success_criteria="Notes saved to incident record"
+            )
         ])
 
 @retry()
@@ -271,7 +307,7 @@ def send_notification(alert: Dict, reason: str) -> str:
         smtp_pass = os.getenv("SMTP_PASSWORD")
         recipients = [email.strip() for email in os.getenv("ALERT_EMAIL_RECIPIENTS", "").split(",") if email.strip()]
         sender_name = os.getenv("SENDER_NAME", "CrewAI Escalation Alert System")
-        sender_email = os.getenv("ALERT_EMAIL_RECIPIENTS", smtp_user)
+        sender_email = os.getenv("SENDER_EMAIL", smtp_user)
 
         logger.info(f"SMTP Config - Host: {smtp_host}, Port: {smtp_port}, User: {smtp_user}")
         logger.info(f"Recipients: {len(recipients)} addresses")

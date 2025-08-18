@@ -13,7 +13,7 @@ recommend_actions:
     A list of 2-3 recommended technical actions that are specific, actionable, and appropriate for the severity level.
     Each action should be practical and based on industry best practices for IT incident response.
   agent: action_recommender
-  output_pydantic: src.msteamdev.tools.notify.RecommendedActions
+  output_pydantic: src.msteamdev.models.RecommendedActions
 
 evaluate_escalation:
   description: >
@@ -67,7 +67,7 @@ notify_bau:
     Draft a professional email message for the BAU team, or clearly state if escalation was not approved.
     Ensure special characters (e.g., backslashes, newlines) are properly handled.
   agent: communicator
-  output_pydantic: src.msteamdev.tools.notify.EmailContent
+  output_pydantic: src.msteamdev.models.EmailContent
 
 shift_report:
   description: >

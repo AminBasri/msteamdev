@@ -501,12 +501,13 @@ def _check_mcp_health() -> Dict[str, Any]:
     }
 
 def _get_active_alerts_count() -> int:
-    """Get count of active alerts."""
+    """Get count of active alerts (async source guarded)."""
     try:
-        from msteamdev.tools.alert_store import _load_log
-        alerts = _load_log()
+        from msteamdev.tools.alert_store import load_log_sync
+        alerts = load_log_sync()
         return sum(1 for alert in alerts if alert.get("status", "").lower() in ["triggered", "acknowledged"])
-    except:
+    except Exception as e:
+        logger.debug(f"Failed to get active alerts count (async path): {e}")
         return 0
 
 def _get_active_alerts_count_sync() -> int:
