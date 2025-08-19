@@ -422,7 +422,7 @@ async def check_and_acknowledge_alert_task(alert: dict, mcp_tools: list, max_ret
         for attempt in range(max_retries):
             try:
                 with openlit.start_trace(name=f"Acknowledge_Incident_{incident_number}") as trace:
-                    crew = Crew(agents=[pagerduty_manager], tasks=[acknowledge_task], verbose=True, telemetry=False)
+                    crew = Crew(agents=[pagerduty_manager], tasks=[acknowledge_task], verbose=True, telemetry=True)
                     kickoff_result = await crew.kickoff_async()
                     result = str(kickoff_result.raw or "")
                     trace.set_metadata({
@@ -578,7 +578,7 @@ async def run_escalation_pipeline(alert: dict, mcp_tools: list):
             agents=[escalation_agent, communicator_agent],
             tasks=[escalation_task, notification_task],
             verbose=True,
-            telemetry=False
+            telemetry=True
         )
 
         logger.info(f"🧠 Kicking off AI crew for escalation and notification of incident {incident_number}")
