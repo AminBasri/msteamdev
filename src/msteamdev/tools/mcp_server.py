@@ -12,21 +12,13 @@ from datetime import datetime
 
 app = FastAPI(title="PagerDuty MCP Server")
 
-# Configure logger
-logger = logging.getLogger('mcp_server')
-logger.setLevel(logging.INFO)
-logger.propagate = False
-logger.handlers.clear()
+from msteamdev.logging_setup import get_module_logger
 
-# Add FileHandler for mcp_server.log
-file_handler = logging.FileHandler('/home/crewai/msteamdev/log/mcp_server.log')
-file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-logger.addHandler(file_handler)
+# Configure centralized logger
+logger = get_module_logger('mcp_server', log_filename='mcp_server.log', level=logging.INFO)
 
-# Add StreamHandler for console output
-stream_handler = logging.StreamHandler()
-stream_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-logger.addHandler(stream_handler)
+# Log startup to verify logging is working
+logger.info("MCP Server module loaded - logging configured")
 
 class IncidentRequest(BaseModel):
     incident_number: str
@@ -40,6 +32,50 @@ def get_pagerduty_session():
     return APISession(token)  # Reverted to pdpyras.APISession
 
 from msteamdev.tools.redis_client import cache_get, cache_set, cache_delete
+
+def _is_placeholder_email(email: str | None) -> bool:
+    if not email:
+        return True
+    lowered = email.strip().lower()
+    return lowered in {"your_email@example.com", "test@example.com", "user@example.com"} or lowered.endswith("@example.com")
+
+def _validate_pd_user_email(session: APISession, email: str) -> bool:
+    try:
+        # Search users by query and look for exact email match
+        users = list(session.iter_all("users", params={"query": email}))
+        for user in users:
+            if str(user.get("email", "")).strip().lower() == email.strip().lower():
+                return True
+        return False
+    except Exception:
+        # On API error, be conservative and mark invalid so we can fallback
+        return False
+
+def _resolve_requester_email(session: APISession, provided_email: str | None) -> str:
+    # Priority: provided_email (if valid) -> PAGERDUTY_FALLBACK_FROM_EMAIL -> SENDER_EMAIL
+    fallback_chain = [
+        os.getenv("PAGERDUTY_FALLBACK_FROM_EMAIL"),
+        os.getenv("SENDER_EMAIL", "noramin@infopro.com.my")
+    ]
+
+    # If provided email looks valid and is a PD user, use it
+    if provided_email and not _is_placeholder_email(provided_email):
+        if _validate_pd_user_email(session, provided_email):
+            logger.info(f"Using provided PagerDuty requester email: {provided_email}")
+            return provided_email
+        else:
+            logger.warning(f"Provided from_email is not a valid PagerDuty user: {provided_email}. Will try fallbacks.")
+
+    # Try fallbacks in order
+    for fb in fallback_chain:
+        if fb and not _is_placeholder_email(fb) and _validate_pd_user_email(session, fb):
+            logger.info(f"Using fallback PagerDuty requester email: {fb}")
+            return fb
+
+    # If all fail, raise with guidance
+    raise HTTPException(status_code=500, detail=(
+        "No valid PagerDuty requester email found. Set a valid PAGERDUTY_FALLBACK_FROM_EMAIL or SENDER_EMAIL environment variable to a PagerDuty user email."
+    ))
 
 def find_incident_by_number(session, incident_number: str):
     """
@@ -76,9 +112,11 @@ async def mcp_handler(request: Request):
         params = body.get("params", {})
         req_id = body.get("id", None)  # Allow None for notifications
 
-        logger.debug(f"Received MCP request: method={method}, id={req_id}, params={params}")
+        # Enhanced logging for all requests
+        logger.info(f"MCP Request received: method={method}, id={req_id}, params={params}")
 
         if method == "initialize":
+            logger.info("Processing initialize request")
             return {
                 "jsonrpc": "2.0",
                 "id": req_id,
@@ -96,6 +134,7 @@ async def mcp_handler(request: Request):
                 "result": None  # Proper JSON-RPC response
             }
         elif method == "tools/list":
+            logger.info("Processing tools/list request")
             return {
                 "jsonrpc": "2.0",
                 "id": req_id,
@@ -136,21 +175,25 @@ async def mcp_handler(request: Request):
         elif method == "tools/call":
             tool = params.get("name")
             args = params.get("arguments", {})
+            logger.info(f"Processing tools/call request: tool={tool}, args={args}")
             if tool == "GetIncidentStatus":
                 return await call_get_incident_status(req_id, args)
             elif tool == "AcknowledgeIncident":
                 return await call_acknowledge_incident(req_id, args)
             else:
+                logger.warning(f"Unknown tool requested: {tool}")
                 return {
                     "jsonrpc": "2.0",
                     "id": req_id,
                     "error": {"code": -32601, "message": f"Unknown tool: {tool}"}
                 }
-        return {
-            "jsonrpc": "2.0",
-            "id": req_id,
-            "error": {"code": -32601, "message": f"Unknown method: {method}"}
-        }
+        else:
+            logger.warning(f"Unknown method requested: {method}")
+            return {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "error": {"code": -32601, "message": f"Unknown method: {method}"}
+            }
     except json.JSONDecodeError:
         logger.error("Invalid JSON in request body")
         return {
@@ -205,7 +248,7 @@ async def call_acknowledge_incident(req_id, args):
             def logic():
                 logger.info(f"AcknowledgeIncident args received: {args}")
                 session = get_pagerduty_session()
-                email = args.get("from_email") or os.getenv("SENDER_EMAIL", "noramin@infopro.com.my")
+                email = _resolve_requester_email(session, args.get("from_email"))
                 incident = find_incident_by_number(session, args["incident_number"])
                 if not incident:
                     raise HTTPException(status_code=404, detail="Incident not found")
@@ -257,4 +300,15 @@ async def call_acknowledge_incident(req_id, args):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=7006, log_level="info")
+    # Add startup logging to verify our logger is working
+    logger.info("Starting MCP Server on port 7006")
+    logger.info("Logging configured for mcp_server.log")
+    
+    # Start uvicorn with our custom logging configuration
+    uvicorn.run(
+        app, 
+        host="0.0.0.0", 
+        port=7006, 
+        log_level="info",
+        log_config=None  # Disable uvicorn's default logging config
+    )

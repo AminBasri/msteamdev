@@ -16,25 +16,10 @@ from pydantic import BaseModel
 import pytz
 import re
 
-# Create a named logger for this module
-logger = logging.getLogger('report')
-logger.setLevel(logging.INFO)
+from msteamdev.logging_setup import get_module_logger
 
-# Avoid propagating logs to the root logger
-logger.propagate = False
-
-# Clear any existing handlers to avoid conflicts
-logger.handlers.clear()
-
-# Add FileHandler for report.log
-file_handler = logging.FileHandler('/home/crewai/msteamdev/log/report.log')
-file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-logger.addHandler(file_handler)
-
-# Add StreamHandler for console output
-stream_handler = logging.StreamHandler()
-stream_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-logger.addHandler(stream_handler)
+# Centralized named logger for this module
+logger = get_module_logger('report', log_filename='report.log', level=logging.INFO)
 
 LOG_PATH = "src/msteamdev/alert_log.json"
 LOCAL_TZ = pytz.timezone('Asia/Singapore')

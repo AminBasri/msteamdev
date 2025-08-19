@@ -5,21 +5,10 @@ import yaml
 import logging
 from crewai import LLM
 
-# Configure logger
-logger = logging.getLogger('llm')
-logger.setLevel(logging.INFO)
-logger.propagate = False
-logger.handlers.clear()
+from msteamdev.logging_setup import get_module_logger
 
-# Add FileHandler for llm.log
-file_handler = logging.FileHandler('/home/crewai/msteamdev/log/llm.log')
-file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-logger.addHandler(file_handler)
-
-# Add StreamHandler for console output
-stream_handler = logging.StreamHandler()
-stream_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-logger.addHandler(stream_handler)
+# Configure logger via centralized setup
+logger = get_module_logger('llm', log_filename='llm.log', level=logging.INFO)
 
 def load_yaml(path):
     """Load YAML configuration file."""

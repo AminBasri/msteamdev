@@ -19,25 +19,10 @@ import openlit
 
 openlit.init()
 
-# Create a named logger for this module
-logger = logging.getLogger('notify')
-logger.setLevel(logging.INFO)
+from msteamdev.logging_setup import get_module_logger
 
-# Avoid propagating logs to the root logger
-logger.propagate = False
-
-# Clear any existing handlers to avoid conflicts
-logger.handlers.clear()
-
-# Add FileHandler for notify.log
-file_handler = logging.FileHandler('/home/crewai/msteamdev/log/notify.log')
-file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-logger.addHandler(file_handler)
-
-# Add StreamHandler for console output
-stream_handler = logging.StreamHandler()
-stream_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-logger.addHandler(stream_handler)
+# Centralized notify logger
+logger = get_module_logger('notify', log_filename='notify.log', level=logging.INFO)
 
 LOCAL_TZ = pytz.timezone('Asia/Singapore')
 

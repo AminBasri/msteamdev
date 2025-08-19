@@ -31,28 +31,19 @@ from msteamdev.tools.enhanced_tools import (
     get_system_health as get_system_health_tool,
 )
 from crewai_tools import FileReadTool
+from msteamdev.logging_setup import setup_root_logger, configure_llm_library_loggers
 
-# Simplified logging setup
-log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'log')
-os.makedirs(log_dir, exist_ok=True)
-log_file_path = os.path.join(log_dir, 'crew.log')
-
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(log_file_path),
-        logging.StreamHandler(sys.stdout)
-    ]
-)
+setup_root_logger('crew.log', logging.INFO)
+# Route llm-related libraries (httpx/httpcore/LiteLLM/litellm/openlit) to llm.log
+configure_llm_library_loggers(["httpx", "httpcore", "litellm", "LiteLLM", "openlit"])
 
 logger = logging.getLogger(__name__)
 
 # Initialize OpenLit for telemetry
 openlit.init()
 
-MCP_SERVER_URL = os.getenv("MCP_SERVER_URL", "http://localhost:6006/mcp")
-from_email = os.getenv("SENDER_EMAIL", "noramin@infopro.com.my")
+MCP_SERVER_URL = os.getenv("MCP_SERVER_URL", "http://localhost:7006/mcp")
+from_email = os.getenv("SENDER_EMAIL", "noc@infopro.com.my")
 
 # Lightweight performance monitor to preserve existing logic and calls
 class _PerformanceMonitor:
@@ -144,7 +135,11 @@ def acknowledge_incident(incident_number: str, from_email: str) -> str:
     Acknowledge a PagerDuty incident.
     Input should be the incident number and the email of the user acknowledging the incident.
     """
-    valid_from_email = from_email or os.getenv("SENDER_EMAIL", "noramin@infopro.com.my")
+    provided = (from_email or "").strip()
+    # Treat placeholder emails as empty so server can choose a validated fallback
+    if provided.lower() in {"your_email@example.com", "test@example.com", "user@example.com"} or provided.endswith("@example.com"):
+        provided = ""
+    valid_from_email = provided or os.getenv("SENDER_EMAIL", "noramin@infopro.com.my")
     jsonrpc_request = {
         "jsonrpc": "2.0",
         "method": "tools/call",
@@ -233,6 +228,18 @@ def get_pagerduty_session():
         logger.critical("PAGERDUTY_API_TOKEN environment variable is not set")
         raise ValueError("Missing PagerDuty API token")
     return APISession(token)
+
+def _is_placeholder_email_local(email: str | None) -> bool:
+    if not email:
+        return True
+    lowered = email.strip().lower()
+    return lowered in {"your_email@example.com", "test@example.com", "user@example.com"} or lowered.endswith("@example.com")
+
+def _resolve_requester_email_local(provided_email: str | None) -> str:
+    if provided_email and not _is_placeholder_email_local(provided_email):
+        return provided_email
+    fallback = os.getenv("PAGERDUTY_FALLBACK_FROM_EMAIL") or os.getenv("SENDER_EMAIL", "noramin@infopro.com.my")
+    return fallback
 
 def find_incident_by_number(session, incident_number: str):
     logger.debug(f"Searching for incident number: {incident_number}")
@@ -454,7 +461,7 @@ async def check_and_acknowledge_alert_task(alert: dict, mcp_tools: list, max_ret
                 session.rput(
                     f"/incidents/{incident['id']}",
                     json={"incident": {"type": "incident_reference", "status": "acknowledged"}},
-                    headers={"From": alert.get("from_email", "noramin@infopro.com.my")}
+                    headers={"From": _resolve_requester_email_local(alert.get("from_email"))}
                 )
                 verified = find_incident_by_number(session, incident_number)
                 result_payload["acknowledgment"] = "success" if verified and verified["status"] == "acknowledged" else "failed"
@@ -725,11 +732,11 @@ ESCALATION_SET_NAME = "scheduled_escalations"
 # PRESERVE your main execution
 if __name__ == "__main__":
     alert = {
-        "incident_number": "191",
-        "title": "Test Alert",
-        "severity": "critical",
-        "timestamp": "2025-07-30T00:02:06Z",
-        "metric": "Server Down",
+        "incident_number": "192",
+        "title": "ALARM: '[WARNING] [INFOPRO-RFC] Synergi CORE Prod - High CPU Util...' in Asia Pacific (Singapore)",
+        "severity": "WARNING",
+        "timestamp": "2025-08-19T03:08:06Z",
+        "metric": "CPU Utilization",
         "status": "triggered",
         "from_email": "noramin@infopro.com.my"
     }

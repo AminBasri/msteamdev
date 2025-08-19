@@ -13,3 +13,4 @@ uv.lock
 *.xlsx
 *.csv
 *workspace
+cloudflared-linux-amd64*

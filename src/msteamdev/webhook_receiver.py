@@ -18,27 +18,9 @@ LOG_PATH = "src/msteamdev/alert_log.json"
 FILTER_ENABLED = True
 ALLOWED_STATUSES = ["triggered","resolved"]
 
-# Configure logging
-logging.basicConfig(
-    filename="crew.log",
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s"
-)
+from msteamdev.logging_setup import get_module_logger
 
-# Dedicated logger for webhook receiver (goes to webhook_receiver.log)
-webhook_logger = logging.getLogger("webhook_receiver")
-webhook_logger.setLevel(logging.INFO)
-
-# Prevent double logging to root logger (avoids duplication in crew.log)
-webhook_logger.propagate = False
-
-webhook_handler = logging.FileHandler("/home/crewai/msteamdev/log/webhook_receiver.log")
-webhook_handler.setLevel(logging.INFO)
-formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-webhook_handler.setFormatter(formatter)
-
-# Attach handler
-webhook_logger.addHandler(webhook_handler)
+webhook_logger = get_module_logger("webhook_receiver", log_filename="webhook_receiver.log", level=logging.INFO)
 
 def extract_severity_from_title(title: str) -> str:
     """Extract severity level from alert title."""

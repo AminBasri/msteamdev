@@ -31,9 +31,9 @@ escalation_checker:
     trends, and business hours considerations. You can analyze alert patterns and system health.
   tools:
     # Original tools (for backward compatibility)
-    - ReadAlertLog
-    - ReadEscalationLog
-    - GetMatchingAlerts
+    # - ReadAlertLog
+    # - ReadEscalationLog
+    # - GetMatchingAlerts
     # Enhanced tools with advanced capabilities
     - ReadAlertLogEnhanced
     - GetMatchingAlertsEnhanced

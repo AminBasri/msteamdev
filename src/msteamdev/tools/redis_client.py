@@ -3,25 +3,11 @@ import redis
 import os
 import json
 import logging
+from msteamdev.logging_setup import get_module_logger
 from typing import Optional, Union
 
-# Configure logger
-logger = logging.getLogger('redis_client')
-logger.setLevel(logging.INFO)
-logger.propagate = False
-logger.handlers.clear()
-
-# Add FileHandler for redis_client.log - use relative path for cross-platform compatibility
-log_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'log')
-os.makedirs(log_dir, exist_ok=True)
-file_handler = logging.FileHandler(os.path.join(log_dir, 'redis_client.log'))
-file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-logger.addHandler(file_handler)
-
-# Add StreamHandler for console output
-stream_handler = logging.StreamHandler()
-stream_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-logger.addHandler(stream_handler)
+# Configure centralized logger
+logger = get_module_logger('redis_client', log_filename='redis_client.log', level=logging.INFO)
 
 # Global client instance - pure sync approach following CrewAI patterns
 _redis_client: Optional[redis.Redis] = None
