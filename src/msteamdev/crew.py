@@ -35,7 +35,7 @@ from msteamdev.logging_setup import setup_root_logger, configure_llm_library_log
 
 setup_root_logger('crew.log', logging.INFO)
 # Route llm-related libraries (httpx/httpcore/LiteLLM/litellm/openlit) to llm.log
-configure_llm_library_loggers(["httpx", "httpcore", "litellm", "LiteLLM", "openlit"])
+configure_llm_library_loggers(["httpx", "httpcore", "litellm", "LiteLLM", "openlit", "opentelemetry.trace", "opentelemetry.instrumentation.instrumentor"])
 
 logger = logging.getLogger(__name__)
 
@@ -134,32 +134,55 @@ def acknowledge_incident(incident_number: str, from_email: str) -> str:
     """
     Acknowledge a PagerDuty incident.
     Input should be the incident number and the email of the user acknowledging the incident.
+    First tries SENDER_EMAIL, falls back to provided email or fallback chain if SENDER_EMAIL fails.
     """
-    provided = (from_email or "").strip()
-    # Treat placeholder emails as empty so server can choose a validated fallback
-    if provided.lower() in {"your_email@example.com", "test@example.com", "user@example.com"} or provided.endswith("@example.com"):
-        provided = ""
-    valid_from_email = provided or os.getenv("SENDER_EMAIL", "noramin@infopro.com.my")
-    jsonrpc_request = {
+    # First try with SENDER_EMAIL
+    sender_email = os.getenv("SENDER_EMAIL", "noramin@infopro.com.my")
+    jsonrpc_request_sender = {
         "jsonrpc": "2.0",
         "method": "tools/call",
-        "params": {"name": "AcknowledgeIncident", "arguments": {"incident_number": incident_number, "from_email": valid_from_email}},
+        "params": {"name": "AcknowledgeIncident", "arguments": {"incident_number": incident_number, "from_email": sender_email}},
         "id": "2"
     }
+    
     try:
-        # ENHANCED: Add performance tracking
         start_time = time.time()
-        response = requests.post(MCP_SERVER_URL, json=jsonrpc_request, timeout=15)
+        response = requests.post(MCP_SERVER_URL, json=jsonrpc_request_sender, timeout=15)
         response.raise_for_status()
         
+        # If successful with SENDER_EMAIL, return the result
         duration = time.time() - start_time
-        performance_monitor.record_processing(incident_number, duration, "successful", "AcknowledgeIncident")
-        
+        performance_monitor.record_processing(incident_number, duration, "successful_sender_email", "AcknowledgeIncident")
         return response.text
     except requests.RequestException as e:
-        logger.error(f"AcknowledgeIncident tool failed: {e}")
-        performance_monitor.record_error_pattern("MCP_AcknowledgeIncident_Failure", incident_number)
-        return f"Error calling MCP server: {e}"
+        logger.warning(f"Failed to acknowledge with SENDER_EMAIL, trying fallback: {e}")
+        performance_monitor.record_error_pattern("SENDER_EMAIL_Failed", incident_number)
+        
+        # If SENDER_EMAIL fails, try with fallback chain
+        provided = (from_email or "").strip()
+        if provided.lower() in {"your_email@example.com", "test@example.com", "user@example.com"} or provided.endswith("@example.com"):
+            provided = ""
+        valid_from_email = provided or os.getenv("PAGERDUTY_FALLBACK_FROM_EMAIL") or sender_email
+        jsonrpc_request = {
+            "jsonrpc": "2.0",
+            "method": "tools/call",
+            "params": {"name": "AcknowledgeIncident", "arguments": {"incident_number": incident_number, "from_email": valid_from_email}},
+            "id": "2"
+        }
+        try:
+            # Track performance for fallback attempt
+            start_time = time.time()
+            response = requests.post(MCP_SERVER_URL, json=jsonrpc_request, timeout=15)
+            response.raise_for_status()
+            
+            duration = time.time() - start_time
+            performance_monitor.record_processing(incident_number, duration, "successful_fallback", "AcknowledgeIncident")
+            
+            return response.text
+        except requests.RequestException as e:
+            logger.error(f"Both SENDER_EMAIL and fallback acknowledgment failed: {e}")
+            performance_monitor.record_error_pattern("Complete_Acknowledgment_Failure", incident_number)
+            return f"Error calling MCP server: {e}"
 
 # ENHANCED: Improve get_mcp_tools with better error handling
 def get_mcp_tools() -> list:
