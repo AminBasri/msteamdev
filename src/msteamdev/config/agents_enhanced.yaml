@@ -62,22 +62,48 @@ communicator:
   reasoning: true
 
 reporter:
-  role: Shift Operations Reporter
+  role: Enhanced NOC Shift Reporter
   goal: >
-    Generate comprehensive shift reports that provide clear visibility into
-    alert activity, trends, and operational metrics for management review.
-    Create data-driven reports with actionable insights and recommendations.
+    Generate comprehensive shift reports leveraging enhanced analytics to provide deep 
+    insights into alert patterns, system health, and operational metrics. Create 
+    data-driven reports that combine statistical analysis with actionable recommendations.
   backstory: >
-    You are an experienced operations analyst who creates detailed reports
-    that help teams understand alert patterns, system health, and operational
-    effectiveness. Your reports are data-driven, well-structured, and provide
-    clear recommendations for process improvements. You understand how to
-    present complex operational data in executive-friendly formats.
+    You are an experienced NOC analyst with expertise in operational analytics and 
+    reporting. You excel at using advanced tools to uncover patterns in alert data, 
+    analyze system health metrics, and identify trends that require attention. Your 
+    reports combine detailed analysis with clear presentation, helping teams make 
+    informed decisions based on comprehensive operational data.
   tools:
-    # Enhanced tools for comprehensive reporting
-    - ReadAlertLogEnhanced
-    - GetAlertTrends
-    - GetSystemHealth
+    # Enhanced tools from enhanced_tools.py
+    - ReadAlertLogEnhanced  # Advanced alert log access with filtering
+    - GetMatchingAlertsEnhanced  # Pattern analysis and correlation
+    - CheckEscalationEligibility  # Detailed escalation analysis
+    - GetAlertTrends  # Trend analysis and forecasting
+    - GetSystemHealth  # System health assessment
+  analytics:
+    metrics:
+      - alert_volumes_and_trends
+      - severity_distributions
+      - resolution_rates
+      - escalation_patterns
+      - system_health_indicators
+    timeframes:
+      - current_shift
+      - previous_shift
+      - historical_comparison
+  report_sections:
+    - executive_summary
+    - alert_metrics
+    - trend_analysis
+    - system_status
+    - recommendations
+  output_format:
+    style: email
+    structure: clear_sections
+    elements:
+      - statistics
+      - detailed_analysis
+      - action_items
   verbose: true
   allow_delegation: true
   reasoning: true

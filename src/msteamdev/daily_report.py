@@ -10,8 +10,39 @@ from email.header import Header
 from email.utils import formataddr
 from crewai import Agent, Task, Crew
 from msteamdev.crew import load_agents, load_yaml, check_resolution_status
-from msteamdev.tools.alert_store import check_escalation_eligibility
-from msteamdev.models import ShiftReportOutput, AlertDetail
+from msteamdev.tools.alert_store import load_log_sync
+
+def check_resolution_status_sync(alert: dict, delay_minutes: int) -> bool:
+    """Synchronous version of check_resolution_status."""
+    alerts = _load_log_sync()
+    incident_number = alert.get("incident_number")
+    current_time = datetime.fromisoformat(alert["timestamp"].replace("Z", "+00:00"))
+    cutoff_time = current_time + timedelta(minutes=delay_minutes)
+
+    for logged_alert in alerts:
+        alert_time = datetime.fromisoformat(logged_alert["timestamp"].replace("Z", "+00:00"))
+        if (logged_alert["incident_number"] == incident_number and
+            logged_alert["status"] == "resolved" and
+            current_time <= alert_time <= cutoff_time):
+            return True
+    return False
+
+# Use the sync version
+check_resolution_status = check_resolution_status_sync
+from msteamdev.tools.alert_store import check_escalation_eligibility_sync as check_escalation_eligibility
+from msteamdev.tools.enhanced_tools import (
+    read_alert_log_enhanced,
+    get_alert_trends,
+    get_system_health,
+    get_matching_alerts_enhanced,
+    check_escalation_eligibility_enhanced
+)
+from msteamdev.models import (
+    ShiftReportOutput,
+    AlertDetail,
+    AlertMatchCriteria,
+    GetMatchingAlertsInput
+)
 from pydantic import BaseModel
 import pytz
 import re
@@ -171,7 +202,7 @@ def run(shift_type=None, shift_start=None, shift_end=None):
     alerts = load_alerts(shift_start_utc, shift_end_utc)
 
     agents = load_agents()
-    tasks_def = load_yaml("src/msteamdev/config/tasks.yaml")
+    tasks_def = load_yaml("src/msteamdev/config/tasks_enhanced.yaml")
     
     reporter_agent = agents.get("reporter")
     if not reporter_agent:
@@ -183,37 +214,114 @@ def run(shift_type=None, shift_start=None, shift_end=None):
         logger.error("Missing shift_report task definition")
         return
 
-    # Prepare alert data for the agent
+    # Prepare alert data using enhanced tools
     delay_minutes = int(os.getenv("ESCALATION_DELAY_MINUTES", "25"))
     alert_summary = []
-    for alert in alerts:
-        eligible, reason = check_escalation_eligibility(alert)
-        was_resolved = check_resolution_status(alert, delay_minutes)
-        escalation_status = "Escalated" if eligible and not was_resolved else "Not Escalated"
+    
+    # Initialize basic alert summary
+    alert_summary = []
+    
+    # Get enhanced data with fallback to basic processing
+    try:
+        # Get system health for additional context
+        system_health = json.loads(get_system_health.run())
         
-        # Convert alert timestamp to local timezone
-        alert_timestamp_utc = datetime.fromisoformat(alert.get('timestamp', 'N/A').replace("Z", "+00:00")).replace(tzinfo=timezone.utc)
-        alert_timestamp_local = alert_timestamp_utc.astimezone(LOCAL_TZ).strftime('%Y-%m-%d %H:%M:%S')
+        for alert in alerts:
+            # Use enhanced escalation eligibility check
+            escalation_result = json.loads(check_escalation_eligibility_enhanced.run(
+                str(alert.get("incident_number")),
+                alert.get("severity", ""),
+                alert.get("title", ""),
+                alert.get("timestamp", ""),
+                alert.get("status", "")
+            ))
+            
+            was_resolved = check_resolution_status(alert, delay_minutes)
+            escalation_status = "Escalated" if escalation_result["eligible"] and not was_resolved else "Not Escalated"
+            
+            # Get pattern analysis for this type of alert
+            pattern_analysis = json.loads(get_matching_alerts_enhanced.run(
+                GetMatchingAlertsInput(
+                    alert=AlertMatchCriteria(
+                        title=alert.get("title"),
+                        severity=alert.get("severity")
+                    )
+                ).json()
+            ))
+            
+            # Convert alert timestamp to local timezone
+            alert_timestamp_utc = datetime.fromisoformat(alert.get('timestamp', 'N/A').replace("Z", "+00:00")).replace(tzinfo=timezone.utc)
+            alert_timestamp_local = alert_timestamp_utc.astimezone(LOCAL_TZ).strftime('%Y-%m-%d %H:%M:%S')
+            
+            # Enhanced reason with pattern analysis
+            enhanced_reason = (f"{escalation_result['reason']}\n" 
+                             f"Pattern Analysis: {pattern_analysis.get('total_matches', 0)} similar alerts found\n" 
+                             f"System Health: {system_health.get('status', 'unknown')}")
 
-        alert_summary.append(AlertDetail(
-            incident_number=int(alert.get('incident_number', 0)),
-            title=alert.get('title', 'Unknown'),
-            severity=alert.get('severity', 'Unknown').upper(),
-            metric=alert.get('metric', 'Unknown'),
-            status=alert.get('status', 'Unknown'),
-            timestamp=alert_timestamp_local,
-            escalation_status=escalation_status,
-            escalation_reason=reason if not was_resolved else 'Resolved within delay period'
-        ))
+            alert_summary.append(AlertDetail(
+                incident_number=int(alert.get('incident_number', 0)),
+                title=alert.get('title', 'Unknown'),
+                severity=alert.get('severity', 'Unknown').upper(),
+                metric=alert.get('metric', 'Unknown'),
+                status=alert.get('status', 'Unknown'),
+                timestamp=alert_timestamp_local,
+                escalation_status=escalation_status,
+                escalation_reason=enhanced_reason if not was_resolved else 'Resolved within delay period'
+            ))
+    except Exception as e:
+        logger.error(f"Failed to process alerts with enhanced tools: {e}")
+        # Fallback to basic alert processing
+        for alert in alerts:
+            try:
+                # Basic alert processing
+                eligible, reason = check_escalation_eligibility(alert)
+                was_resolved = check_resolution_status(alert, delay_minutes)
+                escalation_status = "Escalated" if eligible and not was_resolved else "Not Escalated"
+                
+                alert_timestamp_utc = datetime.fromisoformat(alert.get('timestamp', 'N/A').replace("Z", "+00:00")).replace(tzinfo=timezone.utc)
+                alert_timestamp_local = alert_timestamp_utc.astimezone(LOCAL_TZ).strftime('%Y-%m-%d %H:%M:%S')
 
-    # Calculate counts for the agent
-    alert_count = len(alerts)
-    critical_count = sum(1 for a in alerts if a.get("severity") == "critical")
-    warning_count = sum(1 for a in alerts if a.get("severity") == "warning")
-    resolved_count = sum(1 for a in alerts if a.get("status") == "resolved")
-    escalated_count = sum(1 for a in alerts if 
-                         check_escalation_eligibility(a)[0] and 
-                         not check_resolution_status(a, delay_minutes))
+                alert_summary.append(AlertDetail(
+                    incident_number=int(alert.get('incident_number', 0)),
+                    title=alert.get('title', 'Unknown'),
+                    severity=alert.get('severity', 'Unknown').upper(),
+                    metric=alert.get('metric', 'Unknown'),
+                    status=alert.get('status', 'Unknown'),
+                    timestamp=alert_timestamp_local,
+                    escalation_status=escalation_status,
+                    escalation_reason=reason if not was_resolved else 'Resolved within delay period'
+                ))
+            except Exception as inner_e:
+                logger.error(f"Failed to process alert {alert.get('incident_number')}: {inner_e}")
+
+    # Get enhanced alert trends and metrics
+    try:
+        trends_data = json.loads(get_alert_trends.run(hours=int((shift_end_utc - shift_start_utc).total_seconds() / 3600)))
+        alert_count = trends_data["total_alerts"]
+        severity_dist = trends_data["severity_distribution"]
+        critical_count = severity_dist.get("critical", 0)
+        warning_count = severity_dist.get("warning", 0)
+        resolved_count = sum(1 for a in alerts if a.get("status") == "resolved")
+        
+        # Use enhanced escalation eligibility check
+        escalated_count = sum(1 for a in alerts if
+            json.loads(check_escalation_eligibility_enhanced.run(
+                str(a.get("incident_number")),
+                a.get("severity", ""),
+                a.get("title", ""),
+                a.get("timestamp", ""),
+                a.get("status", "")
+            ))["eligible"] and not check_resolution_status(a, delay_minutes))
+    except Exception as e:
+        logger.error(f"Failed to get enhanced metrics, falling back to basic counting: {e}")
+        # Fallback to basic counting
+        alert_count = len(alerts)
+        critical_count = sum(1 for a in alerts if a.get("severity") == "critical")
+        warning_count = sum(1 for a in alerts if a.get("severity") == "warning")
+        resolved_count = sum(1 for a in alerts if a.get("status") == "resolved")
+        escalated_count = sum(1 for a in alerts if 
+                             check_escalation_eligibility(a)[0] and 
+                             not check_resolution_status(a, delay_minutes))
 
     # Format shift period for the agent
     shift_start_local = shift_start.astimezone(LOCAL_TZ).strftime('%Y-%m-%d %H:%M:%S')
