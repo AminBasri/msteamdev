@@ -1,7 +1,7 @@
 import json
 import logging
 from typing import Any, Dict, List, Optional, Union
-from datetime import datetime, timedelta, timezone, time
+from datetime import datetime, timedelta, timezone
 from functools import lru_cache, wraps
 
 from crewai.tools import tool
@@ -258,7 +258,7 @@ def check_escalation_eligibility_enhanced(
     try:
         # Log tool invocation to incident_pipeline.log
         try:
-            start_time = time.time()
+            start_time = datetime.now(timezone.utc)
             log_entry = {
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "type": "escalation_check_start",
@@ -310,7 +310,7 @@ def check_escalation_eligibility_enhanced(
 
         # Log escalation check completion
         try:
-            end_time = time.time()
+            end_time = datetime.now(timezone.utc)
             log_entry = {
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "type": "escalation_check_completion",
@@ -321,7 +321,7 @@ def check_escalation_eligibility_enhanced(
                     "status": status,
                     "eligible": eligible,
                     "reason": reason,
-                    "duration_seconds": end_time - start_time,
+                    "duration_seconds": (end_time - start_time).total_seconds(),
                     "similar_alerts": analysis["similar_alerts_count"],
                     "business_hours": analysis["business_hours"],
                     "detailed_analysis": analysis["detailed_analysis"]
