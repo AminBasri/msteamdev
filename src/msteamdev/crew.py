@@ -3,7 +3,7 @@ import os
 import sys
 import yaml
 from threading import Thread
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, time
 from functools import wraps
 import time
 import logging
@@ -656,6 +656,20 @@ async def run_escalation_pipeline(alert: dict, mcp_tools: list):
                 logger.info(f"✅ Email sent to BAU for incident {incident_number}")
                 cache_set_remove(ESCALATION_SET_NAME, incident_number)
                 
+                # Record escalation in escalation_log.json
+                escalation_entry = {
+                    "incident_number": incident_number,
+                    "title": alert["title"],
+                    "severity": alert["severity"],
+                    "timestamp": alert["timestamp"],
+                    "escalated": True,
+                    "reason": final_reason,
+                    "escalation_time": datetime.now(timezone.utc).isoformat(),
+                    "escalation_type": "ai_decision" if should_send_email else "policy_check"
+                }
+                from msteamdev.tools.alert_store import save_escalation_log_sync
+                save_escalation_log_sync(escalation_entry)
+                
                 # ENHANCED: Record escalation success
                 duration = time.time() - start_time
                 performance_monitor.record_processing(incident_number, duration, "escalated", "escalation_pipeline")
@@ -720,6 +734,25 @@ async def _run_alert_pipeline_async(alert: dict, mcp_tools: list = None):
     start_time = time.time()
     incident_number = alert.get("incident_number", "N/A")
     
+    # Log pipeline start to incident_pipeline.log
+    try:
+        pipeline_start_entry = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "type": "pipeline_start",
+            "incident_number": incident_number,
+            "alert": {
+                "title": alert.get("title"),
+                "severity": alert.get("severity"),
+                "status": alert.get("status"),
+                "metric": alert.get("metric"),
+                "timestamp": alert.get("timestamp")
+            }
+        }
+        with open("/home/crewai/msteamdev/log/incident_pipeline.log", "a") as f:
+            f.write(json.dumps(pipeline_start_entry) + "\n")
+    except Exception as log_exc:
+        logger.error(f"Failed to write pipeline start to incident log: {log_exc}")
+    
     try:
         mcp_tools = mcp_tools or get_mcp_tools()
         
@@ -752,6 +785,25 @@ async def _run_alert_pipeline_async(alert: dict, mcp_tools: list = None):
     finally:
         end_time = time.time()
         duration = end_time - start_time
+        
+        # Log pipeline completion to incident_pipeline.log
+        try:
+            pipeline_completion_entry = {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "type": "pipeline_completion",
+                "incident_number": incident_number,
+                "duration_seconds": duration,
+                "status": "completed" if not sys.exc_info()[0] else "error",
+                "metrics": {
+                    "processing_time": duration,
+                    "had_error": bool(sys.exc_info()[0]),
+                }
+            }
+            with open("/home/crewai/msteamdev/log/incident_pipeline.log", "a") as f:
+                f.write(json.dumps(pipeline_completion_entry) + "\n")
+        except Exception as log_exc:
+            logger.error(f"Failed to write pipeline completion to incident log: {log_exc}")
+            
         logger.info(f"CrewAI pipeline for incident {incident_number} finished in {duration:.2f} seconds.")
 
 # PRESERVE your background processing
@@ -792,6 +844,27 @@ def get_system_health() -> dict:
         # Get enhanced system health data (call the tool's run method)
         enhanced_health_data = json.loads(enhanced_health._run())
         health_report["enhanced_system_data"] = enhanced_health_data
+        
+        # Log system health info to incident pipeline log
+        try:
+            pipeline_log_entry = {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "type": "system_health",
+                "data": {
+                    "crew_metrics": {
+                        "total_operations": health_report["total_operations"],
+                        "avg_duration": health_report["avg_duration"],
+                        "error_patterns": health_report["error_patterns"]
+                    },
+                    "tool_metrics": health_report["enhanced_tools_metrics"],
+                    "active_alerts": enhanced_health_data.get("active_alerts_count", 0),
+                    "processing_queue": enhanced_health_data.get("processing_queue_size", 0)
+                }
+            }
+            with open("/home/crewai/msteamdev/log/incident_pipeline.log", "a") as f:
+                f.write(json.dumps(pipeline_log_entry) + "\n")
+        except Exception as log_exc:
+            logger.error(f"Failed to write system health to incident pipeline log: {log_exc}")
         
         logger.debug("Successfully integrated enhanced tools metrics")
         logger.info(f"System health: {get_system_health()}")

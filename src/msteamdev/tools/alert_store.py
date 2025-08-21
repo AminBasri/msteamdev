@@ -55,14 +55,18 @@ async def _load_escalation_log():
 async def _save_log(data):
     """Save alert to alert_log.json, avoiding duplicates."""
     alerts = await _load_log()
+    incident_num = str(data['incident_number'])
     if not any(
-        a.get('incident_number') == data['incident_number'] and
-        a.get('title') == data['title'] and
-        a.get('status') == data['status'] and
+        str(a.get('incident_number')) == incident_num and
         a.get('timestamp') == data['timestamp']
         for a in alerts
     ):
-        with open(LOG_FILE, "a") as f:
+        # If this is an update to an existing incident, remove old entries
+        alerts = [a for a in alerts if str(a.get('incident_number')) != incident_num]
+        # Write all alerts back to the file, with the new one appended
+        with open(LOG_FILE, "w") as f:
+            for alert in alerts:
+                f.write(json.dumps(alert) + "\n")
             f.write(json.dumps(data) + "\n")
 
 async def _save_escalation_log(data):
@@ -250,14 +254,18 @@ def load_escalation_log_sync():
 def save_log_sync(data):
     """Save alert to alert_log.json synchronously, avoiding duplicates."""
     alerts = load_log_sync()
+    incident_num = str(data['incident_number'])
     if not any(
-        a.get('incident_number') == data['incident_number'] and
-        a.get('title') == data['title'] and
-        a.get('status') == data['status'] and
+        str(a.get('incident_number')) == incident_num and
         a.get('timestamp') == data['timestamp']
         for a in alerts
     ):
-        with open(LOG_FILE, "a") as f:
+        # If this is an update to an existing incident, remove old entries
+        alerts = [a for a in alerts if str(a.get('incident_number')) != incident_num]
+        # Write all alerts back to the file, with the new one appended
+        with open(LOG_FILE, "w") as f:
+            for alert in alerts:
+                f.write(json.dumps(alert) + "\n")
             f.write(json.dumps(data) + "\n")
 
 def save_escalation_log_sync(data):

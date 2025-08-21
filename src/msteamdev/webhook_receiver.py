@@ -199,7 +199,7 @@ async def update_config(request: Request):
 
 @app.get("/health")
 async def health_check():
-    return JSONResponse(content={"status": "healthy","timestamp": datetime.utcnow().isoformat(), "version": "1.0.0"})  # 200 OK
+    return JSONResponse(content={"name": "pagerduty-webhook-receiver","status": "healthy","timestamp": datetime.utcnow().isoformat(), "version": "1.0.0"})  # 200 OK
 
 if __name__ == "__main__":
     import uvicorn

@@ -1,7 +1,7 @@
 import json
 import logging
 from typing import Any, Dict, List, Optional, Union
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, time
 from functools import lru_cache, wraps
 
 from crewai.tools import tool
@@ -86,6 +86,23 @@ def read_alert_log_enhanced(
         JSON string of filtered alerts
     """
     try:
+        # Log tool invocation to incident_pipeline.log
+        try:
+            log_entry = {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "type": "tool_invocation",
+                "tool": "ReadAlertLogEnhanced",
+                "parameters": {
+                    "limit": limit,
+                    "severity_filter": severity_filter,
+                    "time_window_hours": time_window_hours
+                }
+            }
+            with open("/home/crewai/msteamdev/log/incident_pipeline.log", "a") as f:
+                f.write(json.dumps(log_entry) + "\n")
+        except Exception as log_exc:
+            logger.error(f"Failed to write tool invocation to incident log: {log_exc}")
+
         # Try cache first
         cache_key = f"read_alert_log_enhanced:{limit}:{severity_filter}:{time_window_hours}"
         cached_result = cache_get(cache_key)
@@ -136,6 +153,21 @@ def get_matching_alerts_enhanced(criteria_input: Union[str, Dict, GetMatchingAle
         JSON string of matching alerts with analysis
     """
     try:
+        # Log tool invocation to incident_pipeline.log
+        try:
+            log_entry = {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "type": "tool_invocation",
+                "tool": "GetMatchingAlertsEnhanced",
+                "parameters": {
+                    "criteria": str(criteria_input)
+                }
+            }
+            with open("/home/crewai/msteamdev/log/incident_pipeline.log", "a") as f:
+                f.write(json.dumps(log_entry) + "\n")
+        except Exception as log_exc:
+            logger.error(f"Failed to write tool invocation to incident log: {log_exc}")
+
         if isinstance(criteria_input, GetMatchingAlertsInput):
             pass  # Already in the correct format
         elif isinstance(criteria_input, str):
@@ -224,6 +256,24 @@ def check_escalation_eligibility_enhanced(
         JSON string with eligibility decision and detailed reasoning
     """
     try:
+        # Log tool invocation to incident_pipeline.log
+        try:
+            start_time = time.time()
+            log_entry = {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "type": "escalation_check_start",
+                "incident_number": incident_number,
+                "data": {
+                    "severity": severity,
+                    "title": title,
+                    "status": status,
+                    "timestamp": timestamp
+                }
+            }
+            with open("/home/crewai/msteamdev/log/incident_pipeline.log", "a") as f:
+                f.write(json.dumps(log_entry) + "\n")
+        except Exception as log_exc:
+            logger.error(f"Failed to write escalation check start to incident log: {log_exc}")
         if isinstance(incident_number, str) and incident_number.startswith('{'):
             data = json.loads(incident_number)
             incident_number = data.get('incident_number')
@@ -257,6 +307,30 @@ def check_escalation_eligibility_enhanced(
             "business_hours": _is_business_hours(timestamp),
             "escalation_history": _get_escalation_history(title, severity)
         }
+
+        # Log escalation check completion
+        try:
+            end_time = time.time()
+            log_entry = {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "type": "escalation_check_completion",
+                "incident_number": incident_number,
+                "data": {
+                    "severity": severity,
+                    "title": title,
+                    "status": status,
+                    "eligible": eligible,
+                    "reason": reason,
+                    "duration_seconds": end_time - start_time,
+                    "similar_alerts": analysis["similar_alerts_count"],
+                    "business_hours": analysis["business_hours"],
+                    "detailed_analysis": analysis["detailed_analysis"]
+                }
+            }
+            with open("/home/crewai/msteamdev/log/incident_pipeline.log", "a") as f:
+                f.write(json.dumps(log_entry) + "\n")
+        except Exception as log_exc:
+            logger.error(f"Failed to write escalation check completion to incident log: {log_exc}")
         
         return json.dumps(analysis, indent=2)
         

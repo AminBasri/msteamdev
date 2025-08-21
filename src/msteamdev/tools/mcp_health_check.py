@@ -3,7 +3,7 @@
 import requests
 import json
 
-MCP_URL = "http://localhost:6006/mcp"
+MCP_URL = "http://localhost:7006/mcp"
 
 headers = {"Content-Type": "application/json"}
 payload = {

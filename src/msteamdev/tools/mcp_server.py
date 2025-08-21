@@ -9,6 +9,7 @@ import json
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+from fastapi.responses import JSONResponse
 
 app = FastAPI(title="PagerDuty MCP Server")
 
@@ -241,6 +242,10 @@ async def call_get_incident_status(req_id, args, max_retries=3):
                 }
             await asyncio.sleep(1)
 
+@app.get("/health")
+async def health_check():
+    return JSONResponse(content={"name": "pagerduty-mcp-server","status": "healthy","timestamp": datetime.utcnow().isoformat(), "version": "1.0.0"})  # 200 OK
+
 async def call_acknowledge_incident(req_id, args):
     loop = asyncio.get_running_loop()
     with ThreadPoolExecutor() as executor:
@@ -296,7 +301,6 @@ async def call_acknowledge_incident(req_id, args):
                 "id": req_id,
                 "error": {"code": -32603, "message": f"Failed to acknowledge incident: {str(e)}"}
             }
-
 
 if __name__ == "__main__":
     import uvicorn
