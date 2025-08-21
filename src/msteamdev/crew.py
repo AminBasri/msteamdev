@@ -13,8 +13,41 @@ import re
 import requests
 import openlit
 from crewai import Agent, Task, Crew, Process
+from crewai.agent import Agent as BaseAgent
+from crewai.task import Task as BaseTask
 from msteamdev.llm import get_llm
 from msteamdev.tools.alert_store import check_escalation_eligibility, _load_log
+
+# Enhance Agent and Task classes with logging
+class LoggedAgent(BaseAgent):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.logger = logging.getLogger(__name__)
+        
+    def execute_task(self, task, *args, **kwargs):
+        self.logger.info(f"Agent '{self.name}' starting task: {task.description}")
+        try:
+            result = super().execute_task(task, *args, **kwargs)
+            self.logger.info(f"Agent '{self.name}' completed task successfully")
+            return result
+        except Exception as e:
+            self.logger.error(f"Agent '{self.name}' failed task with error: {str(e)}")
+            raise
+
+class LoggedTask(BaseTask):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.logger = logging.getLogger(__name__)
+        
+    def execute(self, *args, **kwargs):
+        self.logger.info(f"Starting task execution: {self.description}")
+        try:
+            result = super().execute(*args, **kwargs)
+            self.logger.info(f"Task completed successfully: {self.description}")
+            return result
+        except Exception as e:
+            self.logger.error(f"Task failed with error: {str(e)}")
+            raise
 from crewai.tools import tool
 from pdpyras import APISession
 from msteamdev.tools.redis_client import cache_set_add, cache_set_remove, cache_set_is_member
@@ -44,6 +77,21 @@ openlit.init()
 
 MCP_SERVER_URL = os.getenv("MCP_SERVER_URL", "http://localhost:7006/mcp")
 from_email = os.getenv("SENDER_EMAIL", "noc@infopro.com.my")
+
+def log_crew_execution(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        logger.info(f"Starting CrewAI execution: {func.__name__}")
+        try:
+            start_time = time.time()
+            result = func(*args, **kwargs)
+            duration = time.time() - start_time
+            logger.info(f"CrewAI execution completed in {duration:.2f} seconds")
+            return result
+        except Exception as e:
+            logger.error(f"CrewAI execution failed: {str(e)}")
+            raise
+    return wrapper
 
 # Lightweight performance monitor to preserve existing logic and calls
 class _PerformanceMonitor:
@@ -383,8 +431,11 @@ async def check_resolution_status(alert: dict, delay_minutes: int) -> bool:
     return False
 
 # PRESERVE your check_and_acknowledge_alert_task with performance tracking
+@log_crew_execution
 async def check_and_acknowledge_alert_task(alert: dict, mcp_tools: list, max_retries=3):
-    """Check incident status after delay and acknowledge if triggered."""
+    """Check and acknowledge alerts with retries and enhanced error handling."""
+    logger.info(f"Processing alert: {alert.get('incident_number', 'UNKNOWN')}")
+    logger.info(f"Alert details: {json.dumps(alert, indent=2)}")
     start_time = time.time()
     incident_number = alert['incident_number']
     
@@ -743,6 +794,7 @@ def get_system_health() -> dict:
         health_report["enhanced_system_data"] = enhanced_health_data
         
         logger.debug("Successfully integrated enhanced tools metrics")
+        logger.info(f"System health: {get_system_health()}")
     except Exception as e:
         logger.warning(f"Could not integrate enhanced tools metrics: {e}")
         health_report["enhanced_tools_metrics"] = "unavailable"

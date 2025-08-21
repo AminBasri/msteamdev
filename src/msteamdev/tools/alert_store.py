@@ -123,7 +123,7 @@ async def check_escalation_eligibility(current_alert):
             f"- Decision: Do NOT escalate due to recent escalation."
         )
 
-    # Find matching triggered alerts (excluding current alert)
+    # Find matching triggered alerts (always excluding current alert)
     matching_alerts = [
         alert
         for alert in alerts
@@ -132,8 +132,6 @@ async def check_escalation_eligibility(current_alert):
             alert["status"] == "triggered" and
             alert["incident_number"] != current_alert["incident_number"])
     ]
-    if current_alert["status"] == "triggered":
-        matching_alerts.append(current_alert)
 
     if matching_alerts:
         matching_alerts.sort(key=lambda x: x["timestamp"])
@@ -310,7 +308,7 @@ def check_escalation_eligibility_sync(current_alert):
             f"- Decision: Do NOT escalate due to recent escalation."
         )
 
-    # Find matching triggered alerts (excluding current alert)
+    # Find matching triggered alerts (always excluding current alert)
     matching_alerts = [
         alert
         for alert in alerts
@@ -319,8 +317,6 @@ def check_escalation_eligibility_sync(current_alert):
             alert["status"] == "triggered" and
             alert["incident_number"] != current_alert["incident_number"])
     ]
-    if current_alert["status"] == "triggered":
-        matching_alerts.append(current_alert)
 
     if matching_alerts:
         matching_alerts.sort(key=lambda x: x["timestamp"])

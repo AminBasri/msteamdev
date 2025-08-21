@@ -25,7 +25,8 @@ dependencies = [
     "redis",
     "openlit",
     "pytest",
-    "pytest-asyncio"
+    "pytest-asyncio",
+    "plotly"
 ]
 
 [project.scripts]

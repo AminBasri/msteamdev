@@ -5,8 +5,6 @@ from typing import Annotated, List, Optional
 from pydantic import BaseModel, Field
 from crewai.tools import BaseTool
 
-MCP_BASE_URL = os.getenv("MCP_SERVER_URL", "http://localhost:6006")
-
 # --- Data models (can be reused by tasks/agents) ---
 class AlertDetail(BaseModel):
     incident_number: int
