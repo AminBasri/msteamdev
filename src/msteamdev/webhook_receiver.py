@@ -157,7 +157,7 @@ def parse_knowledge_from_note(note_content: str) -> List[dict]:
         for pattern in pattern_list:
             matches = re.finditer(pattern, note_content, re.MULTILINE)
             for match in matches:
-                if knowledge_type in ["false_positive", "planned_maintenance"]:
+                if knowledge_type in ["false_positive", "planned_maintenance", "customer_feedback", "business_context"]:
                     # Boolean flags
                     knowledge_updates.append({
                         "type": knowledge_type,
@@ -200,9 +200,9 @@ def update_incident_summary(incident_data: dict, new_updates: List[dict]):
         elif update_type == "planned_maintenance":
             summary["planned_maintenance"] = update.get("value", True)
         elif update_type == "customer_feedback":
-            summary["customer_response"] = update["content"]
+            summary["customer_response"] = update.get("value", True)
         elif update_type == "business_context":
-            summary["business_impact"] = update["content"]
+            summary["business_impact"] = update.get("value", True)
     
     incident_data["summary"] = summary
 
@@ -286,6 +286,8 @@ async def update_pattern_knowledge(incident_info: dict, knowledge_updates: List[
                 "alert_patterns": {},
                 "false_positive_indicators": [],
                 "planned_maintenance_indicators": [],
+                "customer_feedback_indicators": [],
+                "business_context_indicators": [],
                 "common_root_causes": {},
                 "resolution_methods": {},
                 "last_updated": datetime.now(timezone.utc).isoformat()
@@ -305,7 +307,15 @@ async def update_pattern_knowledge(incident_info: dict, knowledge_updates: List[
             elif update_type == "planned_maintenance":
                 if content not in metric_patterns["planned_maintenance_indicators"]:
                     metric_patterns["planned_maintenance_indicators"].append(content)
+
+            elif update_type == "customer_feedback":
+                if content not in metric_patterns["customer_feedback_indicators"]:
+                    metric_patterns["customer_feedback_indicators"].append(content)
             
+            elif update_type == "business_context":
+                if content not in metric_patterns["business_context_indicators"]:
+                    metric_patterns["business_context_indicators"].append(content)
+
             elif update_type == "root_cause":
                 root_causes = metric_patterns["common_root_causes"]
                 root_causes[content] = root_causes.get(content, 0) + 1
@@ -550,7 +560,9 @@ async def get_all_knowledge():
                 "with_notes": len([k for k, v in knowledge_base.items() if v.get("notes")]),
                 "with_root_cause": len([k for k, v in knowledge_base.items() if v.get("summary", {}).get("root_cause")]),
                 "false_positives": len([k for k, v in knowledge_base.items() if v.get("summary", {}).get("false_positive")]),
-                "planned_maintenance": len([k for k, v in knowledge_base.items() if v.get("summary", {}).get("planned_maintenance")])
+                "planned_maintenance": len([k for k, v in knowledge_base.items() if v.get("summary", {}).get("planned_maintenance")]),
+                "customer_feedback": len([k for k, v in knowledge_base.items() if v.get("summary", {}).get("customer_response")]),
+                "business_context": len([k for k, v in knowledge_base.items() if v.get("summary", {}).get("business_impact")])
             }
         })
     except Exception as e:
