@@ -40,6 +40,7 @@ evaluate_escalation:
     Respond with either "Yes, escalate" or "No, suppress" and include a detailed explanation
     of the decision based on the alert analysis and historical data.
   agent: escalation_checker
+output_pydantic: src.msteamdev.models.EscalationDecision
 
 notify_bau:
   description: >
