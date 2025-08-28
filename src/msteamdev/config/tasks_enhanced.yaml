@@ -8,10 +8,19 @@ recommend_actions:
     and proven troubleshooting methodologies. Focus on practical solutions that can be implemented quickly.
     
     Provide 2-3 specific actions to address it, tailored to the alert's context and severity level.
-    Each action should be technically accurate, feasible, and include verification steps where applicable.
+    For each step, provide a detailed breakdown including:
+    - A clear description of the action.
+    - A priority level (1-5).
+    - Estimated time to complete in minutes.
+    - A list of required tools or access permissions.
+    - Concrete success criteria to verify completion.
   expected_output: >
-    A list of 2-3 recommended technical actions that are specific, actionable, and appropriate for the severity level.
-    Each action should be practical and based on industry best practices for IT incident response.
+    A Pydantic object containing a list of 2 to 3 technical actions. Each action must include:
+    - description: A clear, concise description of the action.
+    - priority_level: An integer from 1 (lowest) to 5 (highest).
+    - estimated_time_minutes: An integer representing the completion time.
+    - required_tools: A list of strings naming necessary tools.
+    - success_criteria: A string describing how to verify the action was successful.
   agent: action_recommender
   output_pydantic: src.msteamdev.models.RecommendedActions
 
@@ -141,7 +150,8 @@ shift_report:
           - Standard signature block
 
     3. Enhanced Formatting Requirements:
-       - Proper section spacing using \n
+       - Proper section spacing using 
+
        - Consistent bullet point formatting
        - Clear section headers
        - Professional tone throughout
