@@ -7,6 +7,7 @@ import json
 import os
 import re
 import logging
+import requests
 from datetime import datetime, timezone
 from typing import List, Dict, Optional
 from pathlib import Path
@@ -183,6 +184,50 @@ def parse_knowledge_from_note(note_content: str) -> List[dict]:
         })
     
     return knowledge_updates
+
+def get_incident_details_from_mcp(incident_id: str) -> Optional[dict]:
+    """
+    Calls the local MCP server to get full incident details by incident ID.
+    """
+    mcp_url = "http://localhost:7006/mcp"
+    request_payload = {
+        "jsonrpc": "2.0",
+        "method": "tools/call",
+        "params": {
+            "name": "GetIncidentById",
+            "arguments": {"incident_id": incident_id}
+        },
+        "id": "webhook-receiver-1" # Static ID for this purpose
+    }
+    try:
+        webhook_logger.info(f"Calling MCP server for incident ID: {incident_id}")
+        response = requests.post(mcp_url, json=request_payload, timeout=10) # 10 second timeout
+        response.raise_for_status()  # Raise an exception for bad status codes
+        
+        mcp_response = response.json()
+        
+        if "error" in mcp_response and mcp_response["error"]:
+            webhook_logger.error(f"MCP server returned an error: {mcp_response['error']}")
+            return None
+            
+        result_content = mcp_response.get("result", {}).get("content", [])
+        if not result_content:
+            webhook_logger.error("MCP response is missing result content.")
+            return None
+            
+        # The actual incident data is a JSON string inside the 'text' field
+        incident_details_str = result_content[0].get("text", "{}")
+        incident_details = json.loads(incident_details_str)
+        
+        webhook_logger.info(f"Successfully retrieved incident details from MCP: #{incident_details.get('incident_number')}")
+        return incident_details
+        
+    except requests.exceptions.RequestException as e:
+        webhook_logger.error(f"Could not connect to MCP server at {mcp_url}: {e}")
+        return None
+    except (json.JSONDecodeError, KeyError) as e:
+        webhook_logger.error(f"Failed to parse MCP server response: {e}")
+        return None
 
 def update_incident_summary(incident_data: dict, new_updates: List[dict]):
     """Update incident summary with latest knowledge"""
@@ -400,42 +445,56 @@ async def receive_alert(request: Request):
 
         # Handle annotation events for knowledge extraction (NEW FEATURE)
         if event_type == "incident.annotated" and note_content:
-            webhook_logger.info(f"Processing annotation for incident {incident_id}")
+            webhook_logger.info(f"Processing annotation for incident ID: {incident_id}")
             webhook_logger.info(f"Note content: {note_content}")
-            
+
+            # New: Get full incident details from MCP server
+            incident_details = get_incident_details_from_mcp(incident_id)
+
+            if not incident_details:
+                webhook_logger.error(f"Could not retrieve details for incident ID {incident_id}. Aborting knowledge update.")
+                return JSONResponse(
+                    content={"status": "error", "message": f"Failed to get incident details for ID {incident_id}"},
+                    status_code=500
+                )
+
+            incident_number = str(incident_details.get("incident_number", incident_id))
+            webhook_logger.info(f"Resolved incident ID {incident_id} to number {incident_number}")
+
             # Parse knowledge from note
             knowledge_updates = parse_knowledge_from_note(note_content)
-            
+
             if knowledge_updates:
-                # Extract incident info from the incident reference
-                incident_summary = data.get("summary", "")
+                # Use the correct details from the MCP call
                 incident_info = {
                     "incident_id": incident_id,
-                    "incident_number": incident_id,  # Use ID as number for now
-                    "title": incident_summary,
-                    "severity": extract_severity_from_title(incident_summary),
-                    "metric": extract_metric_from_title(incident_summary),
-                    "status": "unknown",  # Status not available in annotation payload
-                    "timestamp": payload["event"].get("occurred_at", datetime.now(timezone.utc).isoformat()),
+                    "incident_number": incident_number,
+                    "title": incident_details.get("title", data.get("summary", "")),
+                    "severity": extract_severity_from_title(incident_details.get("title", "")),
+                    "metric": extract_metric_from_title(incident_details.get("title", "")),
+                    "status": incident_details.get("status", "unknown"),
+                    "timestamp": incident_details.get("created_at", payload["event"].get("occurred_at", datetime.now(timezone.utc).isoformat())),
                     "from_email": payload["event"].get("agent", {}).get("summary", "")
                 }
-                
-                await store_incident_knowledge(incident_id, knowledge_updates, incident_info, note_content)
+
+                # Use the correct incident_number to store knowledge
+                await store_incident_knowledge(incident_number, knowledge_updates, incident_info, note_content)
                 await update_pattern_knowledge(incident_info, knowledge_updates)
-                
-                webhook_logger.info(f"Stored {len(knowledge_updates)} knowledge updates for incident {incident_id}")
-                
+
+                webhook_logger.info(f"Stored {len(knowledge_updates)} knowledge updates for incident #{incident_number}")
+
                 return JSONResponse(content={
-                    "status": "knowledge_updated", 
-                    "incident": incident_id, 
+                    "status": "knowledge_updated",
+                    "incident_id": incident_id,
+                    "incident_number": incident_number,
                     "updates": len(knowledge_updates),
-                    "note_content": note_content[:100] + "..." if len(note_content) > 100 else note_content
                 })
             else:
-                webhook_logger.info(f"No extractable knowledge found in note: {note_content}")
+                webhook_logger.info(f"No extractable knowledge found in note for incident #{incident_number}")
                 return JSONResponse(content={
-                    "status": "note_processed", 
-                    "incident": incident_id, 
+                    "status": "note_processed",
+                    "incident_id": incident_id,
+                    "incident_number": incident_number,
                     "message": "Note processed but no structured knowledge extracted"
                 })
 
@@ -538,13 +597,13 @@ async def get_incident_knowledge(incident_number: str):
             return JSONResponse(content=incident_data)
         else:
             return JSONResponse(
-                content={"message": f"No knowledge found for incident {incident_number}"}, 
+                content={"message": f"No knowledge found for incident {incident_number}"},
                 status_code=404
             )
     except Exception as e:
         webhook_logger.error(f"Error retrieving knowledge: {e}")
         return JSONResponse(
-            content={"error": str(e)}, 
+            content={"error": str(e)},
             status_code=500
         )
 
@@ -570,7 +629,7 @@ async def get_all_knowledge():
         return JSONResponse(content={"error": str(e)}, status_code=500)
 
 @app.get("/config")
-async def get_config():
+def get_config():
     return JSONResponse(content={
         "filter_enabled": FILTER_ENABLED,
         "allowed_statuses": ALLOWED_STATUSES,
@@ -605,7 +664,7 @@ async def update_config(request: Request):
         )
 
 @app.get("/health")
-async def health_check():
+def health_check():
     knowledge_status = "enabled" if os.path.exists(CREWAI_KNOWLEDGE_BASE) else "disabled"
     return JSONResponse(content={
         "name": "pagerduty-webhook-receiver",
