@@ -105,15 +105,139 @@ def find_incident_by_number(session, incident_number: str):
         logger.error(f"Failed to fetch incidents: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to fetch incidents: {str(e)}")
 
+def find_incident_by_id(session, incident_id: str):
+    """
+    Finds an incident by its ID, using cache to avoid redundant API calls.
+    """
+    cache_key = f"incident_id:{incident_id}"
+
+    # 1. Check cache first
+    cached_incident = cache_get(cache_key)
+    if cached_incident:
+        logger.info(f"Cache HIT for incident ID {incident_id}")
+        return cached_incident
+
+    # 2. If not in cache, fetch from API
+    logger.info(f"Cache MISS for incident ID {incident_id}. Fetching from PagerDuty API.")
+    try:
+        for incident in session.iter_all("incidents"):
+            if incident.get("id") == incident_id:
+                logger.info(f"Found incident by ID: {incident_id} -> #{incident.get('incident_number')}")
+                # 3. Save to cache with a 5-minute TTL (300 seconds)
+                cache_set(cache_key, incident, ttl_seconds=300)
+                return incident
+        logger.warning(f"Incident with ID {incident_id} not found")
+        return None
+    except Exception as e:
+        logger.error(f"Failed to fetch incident by ID: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch incident by ID: {str(e)}")
+
+def get_tools_list():
+    """Enhanced tools list including GetIncidentById"""
+    return {
+        "tools": [
+            {
+                "name": "GetIncidentStatus",
+                "description": "Get the status of a PagerDuty incident by incident number",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "incident_number": {
+                            "type": "string",
+                            "description": "The incident number to check"
+                        }
+                    },
+                    "required": ["incident_number"],
+                    "json_schema_extra": {}
+                }
+            },
+            {
+                "name": "GetIncidentById",
+                "description": "Get incident details by incident ID (returns full incident data including incident number)",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "incident_id": {
+                            "type": "string", 
+                            "description": "The PagerDuty incident ID (e.g., Q1ESFOEHYA4EUZ)"
+                        }
+                    },
+                    "required": ["incident_id"],
+                    "json_schema_extra": {}
+                }
+            },
+            {
+                "name": "AcknowledgeIncident",
+                "description": "Acknowledge a PagerDuty incident",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "incident_number": {"type": "string"},
+                        "from_email": {"type": "string"}
+                    },
+                    "required": ["incident_number"],
+                    "json_schema_extra": {}
+                }
+            }
+        ]
+    }
+
+# Add the new tool handler function
+async def call_get_incident_by_id(req_id, args, max_retries=3):
+    """Handle GetIncidentById tool calls"""
+    for attempt in range(max_retries):
+        try:
+            loop = asyncio.get_running_loop()
+            with ThreadPoolExecutor() as executor:
+                def logic():
+                    session = get_pagerduty_session()
+                    incident = find_incident_by_id(session, args["incident_id"])
+                    
+                    if not incident:
+                        raise HTTPException(status_code=404, detail="Incident not found")
+                    
+                    # Return comprehensive incident data
+                    return {
+                        "id": incident["id"],
+                        "incident_number": incident["incident_number"], 
+                        "status": incident["status"],
+                        "title": incident.get("title", ""),
+                        "summary": incident.get("summary", ""),
+                        "description": incident.get("description", ""),
+                        "urgency": incident.get("urgency", "unknown"),
+                        "priority": incident.get("priority", {}).get("summary", "unknown") if incident.get("priority") else "unknown",
+                        "service": incident.get("service", {}).get("summary", "unknown") if incident.get("service") else "unknown",
+                        "created_at": incident.get("created_at", ""),
+                        "last_status_change_at": incident.get("last_status_change_at", ""),
+                        "html_url": incident.get("html_url", ""),
+                        "assignments": incident.get("assignments", [])
+                    }
+                    
+                result = await loop.run_in_executor(executor, logic)
+                logger.info(f"Retrieved incident by ID: {args['incident_id']} -> #{result['incident_number']}")
+                return {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "result": {"content": [{"type": "text", "text": json.dumps(result)}]}
+                }
+        except Exception as e:
+            logger.error(f"Attempt {attempt + 1}/{max_retries} failed for GetIncidentById: {str(e)}")
+            if attempt == max_retries - 1:
+                return {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "error": {"code": -32603, "message": f"Failed after {max_retries} attempts: {str(e)}"}
+                }
+            await asyncio.sleep(1)
+
 @app.post("/mcp")
 async def mcp_handler(request: Request):
     try:
         body = await request.json()
         method = body.get("method")
         params = body.get("params", {})
-        req_id = body.get("id", None)  # Allow None for notifications
+        req_id = body.get("id", None)
 
-        # Enhanced logging for all requests
         logger.info(f"MCP Request received: method={method}, id={req_id}, params={params}")
 
         if method == "initialize":
@@ -132,53 +256,24 @@ async def mcp_handler(request: Request):
             return {
                 "jsonrpc": "2.0",
                 "id": req_id,
-                "result": None  # Proper JSON-RPC response
+                "result": None
             }
         elif method == "tools/list":
             logger.info("Processing tools/list request")
             return {
                 "jsonrpc": "2.0",
                 "id": req_id,
-                "result": {
-                    "tools": [
-                        {
-                            "name": "GetIncidentStatus",
-                            "description": "Get the status of a PagerDuty incident by incident number",
-                            "inputSchema": {
-                                "type": "object",
-                                "properties": {
-                                    "incident_number": {
-                                        "type": "string",
-                                        "description": "The incident number to check"
-                                    }
-                                },
-                                "required": ["incident_number"],
-                                "json_schema_extra": {}
-                            }
-                        },
-                        {
-                            "name": "AcknowledgeIncident",
-                            "description": "Acknowledge a PagerDuty incident",
-                            "inputSchema": {
-                                "type": "object",
-                                "properties": {
-                                    "incident_number": {"type": "string"},
-                                    "from_email": {"type": "string"}
-                                },
-                                "required": ["incident_number"],
-                                "json_schema_extra": {}
-                            }
-                        },
-                        
-                    ]
-                }
+                "result": get_tools_list()
             }
         elif method == "tools/call":
             tool = params.get("name")
             args = params.get("arguments", {})
             logger.info(f"Processing tools/call request: tool={tool}, args={args}")
+            
             if tool == "GetIncidentStatus":
                 return await call_get_incident_status(req_id, args)
+            elif tool == "GetIncidentById":
+                return await call_get_incident_by_id(req_id, args)
             elif tool == "AcknowledgeIncident":
                 return await call_acknowledge_incident(req_id, args)
             else:
