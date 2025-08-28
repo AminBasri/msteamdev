@@ -291,7 +291,9 @@ async def store_incident_knowledge(incident_number: str, knowledge_updates: List
                 "knowledge_updates": [],
                 "summary": {}
             }
-        
+        else: # If incident exists, update the status
+            knowledge_base[incident_number]["status"] = incident_info.get("status", knowledge_base[incident_number]["status"])
+
         # Add the raw note if provided
         if note_content:
             knowledge_base[incident_number]["notes"].append({
