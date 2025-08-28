@@ -7,8 +7,9 @@ import json
 import os
 import re
 import logging
-from datetime import datetime
-from typing import List
+from datetime import datetime, timezone
+from typing import List, Dict, Optional
+from pathlib import Path
 
 # FastAPI application for receiving PagerDuty webhooks
 app = FastAPI(title="PagerDuty Webhook Receiver")
@@ -16,11 +17,34 @@ LOG_PATH = "src/msteamdev/alert_log.json"
 
 # Configuration flags for filtering
 FILTER_ENABLED = True
-ALLOWED_STATUSES = ["triggered","resolved"]
+ALLOWED_STATUSES = ["triggered", "resolved"]
+
+# CrewAI Knowledge System Configuration
+CREWAI_KNOWLEDGE_BASE = "/home/crewai/msteamdev/knowledge"
+INCIDENT_KNOWLEDGE_FILE = os.path.join(CREWAI_KNOWLEDGE_BASE, "incident_knowledge.json")
+PATTERNS_KNOWLEDGE_FILE = os.path.join(CREWAI_KNOWLEDGE_BASE, "alert_patterns.json")
+BUSINESS_CONTEXT_FILE = os.path.join(CREWAI_KNOWLEDGE_BASE, "business_context.json")
 
 from msteamdev.logging_setup import get_module_logger
 
 webhook_logger = get_module_logger("webhook_receiver", log_filename="webhook_receiver.log", level=logging.INFO)
+
+def ensure_knowledge_folder():
+    """Ensure CrewAI knowledge folder structure exists"""
+    try:
+        Path(CREWAI_KNOWLEDGE_BASE).mkdir(parents=True, exist_ok=True)
+        
+        # Initialize files if they don't exist
+        for file_path in [INCIDENT_KNOWLEDGE_FILE, PATTERNS_KNOWLEDGE_FILE, BUSINESS_CONTEXT_FILE]:
+            if not os.path.exists(file_path):
+                with open(file_path, 'w') as f:
+                    json.dump({}, f)
+        
+        webhook_logger.info(f"Knowledge folder initialized at {CREWAI_KNOWLEDGE_BASE}")
+        return True
+    except Exception as e:
+        webhook_logger.error(f"Failed to initialize knowledge folder: {e}")
+        return False
 
 def extract_severity_from_title(title: str) -> str:
     """Extract severity level from alert title."""
@@ -72,9 +96,295 @@ def should_process_alert(status: str) -> bool:
         return True
     return status.lower() in [s.lower() for s in ALLOWED_STATUSES]
 
+def parse_knowledge_from_note(note_content: str) -> List[dict]:
+    """Parse structured knowledge from PagerDuty notes using keywords"""
+    knowledge_updates = []
+    
+    # Define knowledge extraction patterns
+    patterns = {
+        # Root cause patterns
+        "root_cause": [
+            r"(?i)root\s*cause:?\s*(.+)",
+            r"(?i)caused\s*by:?\s*(.+)",
+            r"(?i)issue\s*was:?\s*(.+)",
+            r"(?i)problem:?\s*(.+)"
+        ],
+        
+        # Resolution patterns  
+        "resolution": [
+            r"(?i)resolved\s*by:?\s*(.+)",
+            r"(?i)fixed\s*by:?\s*(.+)",
+            r"(?i)solution:?\s*(.+)",
+            r"(?i)action\s*taken:?\s*(.+)"
+        ],
+        
+        # False positive patterns
+        "false_positive": [
+            r"(?i)false\s*positive",
+            r"(?i)false\s*alarm", 
+            r"(?i)no\s*actual\s*issue",
+            r"(?i)monitoring\s*error",
+            r"(?i)threshold\s*too\s*low"
+        ],
+        
+        # Planned maintenance patterns
+        "planned_maintenance": [
+            r"(?i)planned\s*maintenance",
+            r"(?i)scheduled\s*work",
+            r"(?i)batch\s*job",
+            r"(?i)deployment",
+            r"(?i)maintenance\s*window",
+            r"(?i)expected\s*activity"
+        ],
+        
+        # Customer feedback patterns
+        "customer_feedback": [
+            r"(?i)customer\s*(?:says?|confirms?|reports?):?\s*(.+)",
+            r"(?i)client\s*(?:says?|confirms?|reports?):?\s*(.+)",
+            r"(?i)user\s*feedback:?\s*(.+)"
+        ],
+        
+        # Business context patterns
+        "business_context": [
+            r"(?i)business\s*impact:?\s*(.+)",
+            r"(?i)affects?:?\s*(.+)",
+            r"(?i)service\s*impact:?\s*(.+)"
+        ]
+    }
+    
+    # Extract knowledge using patterns
+    for knowledge_type, pattern_list in patterns.items():
+        for pattern in pattern_list:
+            matches = re.finditer(pattern, note_content, re.MULTILINE)
+            for match in matches:
+                if knowledge_type in ["false_positive", "planned_maintenance", "customer_feedback", "business_context"]:
+                    # Boolean flags
+                    knowledge_updates.append({
+                        "type": knowledge_type,
+                        "content": match.group(0),
+                        "value": True,
+                        "timestamp": datetime.now(timezone.utc).isoformat()
+                    })
+                else:
+                    # Text content
+                    content = match.group(1) if match.groups() else match.group(0)
+                    knowledge_updates.append({
+                        "type": knowledge_type,
+                        "content": content.strip(),
+                        "timestamp": datetime.now(timezone.utc).isoformat()
+                    })
+    
+    # Also capture free-form lessons learned
+    if len(note_content) > 50:  # Substantial note
+        knowledge_updates.append({
+            "type": "note_content",
+            "content": note_content,
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        })
+    
+    return knowledge_updates
+
+def update_incident_summary(incident_data: dict, new_updates: List[dict]):
+    """Update incident summary with latest knowledge"""
+    summary = incident_data.get("summary", {})
+    
+    for update in new_updates:
+        update_type = update["type"]
+        
+        if update_type == "root_cause":
+            summary["root_cause"] = update["content"]
+        elif update_type == "resolution":
+            summary["resolution_method"] = update["content"]
+        elif update_type == "false_positive":
+            summary["false_positive"] = update.get("value", True)
+        elif update_type == "planned_maintenance":
+            summary["planned_maintenance"] = update.get("value", True)
+        elif update_type == "customer_feedback":
+            summary["customer_response"] = update.get("value", True)
+        elif update_type == "business_context":
+            summary["business_impact"] = update.get("value", True)
+    
+    incident_data["summary"] = summary
+
+def load_knowledge_base() -> dict:
+    """Load incident knowledge base"""
+    try:
+        with open(INCIDENT_KNOWLEDGE_FILE, "r") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+    except Exception as e:
+        webhook_logger.error(f"Error loading knowledge base: {e}")
+        return {}
+
+def save_knowledge_base(knowledge_base: dict):
+    """Save incident knowledge base"""
+    try:
+        with open(INCIDENT_KNOWLEDGE_FILE, "w") as f:
+            json.dump(knowledge_base, f, indent=2, default=str)
+    except Exception as e:
+        webhook_logger.error(f"Error saving knowledge base: {e}")
+
+async def store_incident_knowledge(incident_number: str, knowledge_updates: List[dict], incident_info: dict, note_content: str = None):
+    """Store extracted knowledge in CrewAI knowledge folder"""
+    try:
+        # Load existing knowledge
+        knowledge_base = load_knowledge_base()
+        
+        # Create incident entry if not exists
+        if incident_number not in knowledge_base:
+            knowledge_base[incident_number] = {
+                "incident_number": incident_number,
+                "title": incident_info.get("title", ""),
+                "severity": incident_info.get("severity", ""),
+                "metric": incident_info.get("metric", ""),
+                "status": incident_info.get("status", ""),
+                "created_at": incident_info.get("timestamp", ""),
+                "from_email": incident_info.get("from_email", ""),
+                "last_updated": datetime.now(timezone.utc).isoformat(),
+                "notes": [],
+                "knowledge_updates": [],
+                "summary": {}
+            }
+        
+        # Add the raw note if provided
+        if note_content:
+            knowledge_base[incident_number]["notes"].append({
+                "content": note_content,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "processed_at": datetime.now(timezone.utc).isoformat()
+            })
+        
+        # Add parsed knowledge
+        knowledge_base[incident_number]["knowledge_updates"].extend(knowledge_updates)
+        knowledge_base[incident_number]["last_updated"] = datetime.now(timezone.utc).isoformat()
+        
+        # Update summary
+        update_incident_summary(knowledge_base[incident_number], knowledge_updates)
+        
+        # Save back to CrewAI knowledge folder
+        save_knowledge_base(knowledge_base)
+        
+        webhook_logger.info(f"Knowledge stored in CrewAI folder for incident {incident_number}: {len(knowledge_updates)} updates")
+        
+    except Exception as e:
+        webhook_logger.error(f"Error storing knowledge: {e}")
+
+async def update_pattern_knowledge(incident_info: dict, knowledge_updates: List[dict]):
+    """Update pattern recognition knowledge base"""
+    try:
+        with open(PATTERNS_KNOWLEDGE_FILE, 'r') as f:
+            patterns = json.load(f)
+        
+        metric = incident_info.get("metric", "unknown")
+        title = incident_info.get("title", "")
+        
+        # Initialize metric patterns
+        if metric not in patterns:
+            patterns[metric] = {
+                "metric_name": metric,
+                "alert_patterns": {},
+                "false_positive_indicators": [],
+                "planned_maintenance_indicators": [],
+                "customer_feedback_indicators": [],
+                "business_context_indicators": [],
+                "common_root_causes": {},
+                "resolution_methods": {},
+                "last_updated": datetime.now(timezone.utc).isoformat()
+            }
+        
+        metric_patterns = patterns[metric]
+        
+        # Process each knowledge update
+        for update in knowledge_updates:
+            update_type = update["type"]
+            content = update["content"]
+            
+            if update_type == "false_positive":
+                if content not in metric_patterns["false_positive_indicators"]:
+                    metric_patterns["false_positive_indicators"].append(content)
+            
+            elif update_type == "planned_maintenance":
+                if content not in metric_patterns["planned_maintenance_indicators"]:
+                    metric_patterns["planned_maintenance_indicators"].append(content)
+
+            elif update_type == "customer_feedback":
+                if content not in metric_patterns["customer_feedback_indicators"]:
+                    metric_patterns["customer_feedback_indicators"].append(content)
+            
+            elif update_type == "business_context":
+                if content not in metric_patterns["business_context_indicators"]:
+                    metric_patterns["business_context_indicators"].append(content)
+
+            elif update_type == "root_cause":
+                root_causes = metric_patterns["common_root_causes"]
+                root_causes[content] = root_causes.get(content, 0) + 1
+            
+            elif update_type == "resolution":
+                resolutions = metric_patterns["resolution_methods"]
+                resolutions[content] = resolutions.get(content, 0) + 1
+        
+        metric_patterns["last_updated"] = datetime.now(timezone.utc).isoformat()
+        
+        # Save patterns
+        with open(PATTERNS_KNOWLEDGE_FILE, 'w') as f:
+            json.dump(patterns, f, indent=2, default=str)
+        
+        webhook_logger.info(f"Updated pattern knowledge for metric: {metric}")
+        
+    except Exception as e:
+        webhook_logger.error(f"Error updating pattern knowledge: {e}")
+
+def detect_webhook_version_and_extract(payload: dict) -> tuple:
+    """
+    Detect webhook version and extract relevant information
+    Returns: (webhook_version, event_type, incident_data, note_content, incident_id)
+    """
+    # PagerDuty Webhook v3 detection (your new format)
+    if "event" in payload and isinstance(payload["event"], dict):
+        event = payload["event"]
+        event_type = event.get("event_type", "")
+        
+        # For incident.annotated events - extract note and incident info
+        if event_type == "incident.annotated":
+            data = event.get("data", {})
+            note_content = data.get("content", "")  # Direct content field
+            incident_info = data.get("incident", {})  # Incident reference
+            incident_id = incident_info.get("id", "")
+            
+            # Extract incident number from summary if available
+            summary = incident_info.get("summary", "")
+            incident_number = "unknown"
+            
+            return ("v3", event_type, incident_info, note_content, incident_id)
+        
+        # Other v3 events (triggered, resolved, etc.)
+        else:
+            incident_data = event.get("data", {})
+            return ("v3", event_type, incident_data, None, incident_data.get("id", ""))
+    
+    # Your current webhook format (existing functionality)
+    elif isinstance(payload, list) and payload:
+        item = payload[0]
+        event = item.get("body", {}).get("event", {})
+        data = event.get("data", {})
+        return ("v2", "incident.triggered", data, None, data.get("id", ""))
+    
+    # Direct event format (existing functionality)
+    elif "event" in payload:
+        event = payload["event"]
+        data = event.get("data", {})
+        return ("v2", "incident.triggered", data, None, data.get("id", ""))
+    
+    return ("unknown", "", {}, None, "")
+
 @app.post("/pagerduty")
 async def receive_alert(request: Request):
     try:
+        # Initialize knowledge system
+        if not ensure_knowledge_folder():
+            webhook_logger.warning("Knowledge system initialization failed, continuing without it")
+
         raw_payload = await request.body()
         webhook_logger.info(f"Received webhook payload: {raw_payload.decode('utf-8')}")
 
@@ -84,76 +394,125 @@ async def receive_alert(request: Request):
             webhook_logger.error(f"JSON parsing error: {str(jde)}")
             raise ValueError(f"Invalid JSON format: {str(jde)}")
 
-        event = None
-        if isinstance(payload, list):
-            item = payload[0]
-            event = item.get("body", {}).get("event")
-        else:
-            event = payload.get("event")
+        # Detect webhook version and extract data
+        webhook_version, event_type, data, note_content, incident_id = detect_webhook_version_and_extract(payload)
+        webhook_logger.info(f"Detected webhook {webhook_version}, event: {event_type}")
 
-        if not event:
-            raise ValueError("Missing 'event' field in payload")
+        # Handle annotation events for knowledge extraction (NEW FEATURE)
+        if event_type == "incident.annotated" and note_content:
+            webhook_logger.info(f"Processing annotation for incident {incident_id}")
+            webhook_logger.info(f"Note content: {note_content}")
+            
+            # Parse knowledge from note
+            knowledge_updates = parse_knowledge_from_note(note_content)
+            
+            if knowledge_updates:
+                # Extract incident info from the incident reference
+                incident_summary = data.get("summary", "")
+                incident_info = {
+                    "incident_id": incident_id,
+                    "incident_number": incident_id,  # Use ID as number for now
+                    "title": incident_summary,
+                    "severity": extract_severity_from_title(incident_summary),
+                    "metric": extract_metric_from_title(incident_summary),
+                    "status": "unknown",  # Status not available in annotation payload
+                    "timestamp": payload["event"].get("occurred_at", datetime.now(timezone.utc).isoformat()),
+                    "from_email": payload["event"].get("agent", {}).get("summary", "")
+                }
+                
+                await store_incident_knowledge(incident_id, knowledge_updates, incident_info, note_content)
+                await update_pattern_knowledge(incident_info, knowledge_updates)
+                
+                webhook_logger.info(f"Stored {len(knowledge_updates)} knowledge updates for incident {incident_id}")
+                
+                return JSONResponse(content={
+                    "status": "knowledge_updated", 
+                    "incident": incident_id, 
+                    "updates": len(knowledge_updates),
+                    "note_content": note_content[:100] + "..." if len(note_content) > 100 else note_content
+                })
+            else:
+                webhook_logger.info(f"No extractable knowledge found in note: {note_content}")
+                return JSONResponse(content={
+                    "status": "note_processed", 
+                    "incident": incident_id, 
+                    "message": "Note processed but no structured knowledge extracted"
+                })
 
-        data = event.get("data")
-        if not data:
-            raise ValueError("Missing 'data' in event")
+        # Handle triggered incidents (PRESERVE ORIGINAL FUNCTIONALITY)
+        if event_type not in ["incident.annotated"]:  # Only process non-annotation events
+            
+            if not data:
+                raise ValueError("Missing 'data' in event")
 
-        title = data.get("title")
-        if not title:
-            raise ValueError("Missing 'title' in data")
+            title = data.get("title") or data.get("summary", "")
+            if not title:
+                raise ValueError("Missing 'title' in data")
 
-        status = data.get("status", "unknown").lower()
-        occurred_at = event.get("occurred_at", "unknown")
+            status = data.get("status", "unknown").lower()
+            
+            # Get timestamp from appropriate field
+            occurred_at = data.get("created_at") or data.get("occurred_at") or payload.get("event", {}).get("occurred_at", "unknown")
 
-        if not validate_timestamp(occurred_at):
-            raise ValueError("Invalid timestamp format in 'occurred_at'")
+            if occurred_at != "unknown" and not validate_timestamp(occurred_at):
+                raise ValueError("Invalid timestamp format")
 
-        if not should_process_alert(status):
-            webhook_logger.info(f"Alert with status '{status}' filtered out. Allowed statuses: {ALLOWED_STATUSES}")
-            return JSONResponse(
-                content={"status": "filtered", "message": f"Alert status '{status}' not in allowed list"},
-                status_code=200
-            )
+            if not should_process_alert(status):
+                webhook_logger.info(f"Alert with status '{status}' filtered out. Allowed statuses: {ALLOWED_STATUSES}")
+                return JSONResponse(
+                    content={"status": "filtered", "message": f"Alert status '{status}' not in allowed list"},
+                    status_code=200
+                )
 
-        # Extract from_email, prioritizing assignee's email if available
-        from_email = data.get("from_email")
-        if not from_email and data.get("assignees"):
-            first_assignee = data["assignees"][0]
-            if first_assignee and first_assignee.get("id"):
-                assignee_id = first_assignee["id"]
-                fetched_email = get_user_email_from_pagerduty(assignee_id)
-                if fetched_email:
-                    from_email = fetched_email
-                    webhook_logger.info(f"Using assignee's email {from_email} for incident {data.get('number', 'N/A')}")
+            # Extract from_email, prioritizing assignee's email if available (ORIGINAL LOGIC)
+            from_email = data.get("from_email")
+            if not from_email and data.get("assignees"):
+                first_assignee = data["assignees"][0]
+                if first_assignee and first_assignee.get("id"):
+                    assignee_id = first_assignee["id"]
+                    fetched_email = get_user_email_from_pagerduty(assignee_id)
+                    if fetched_email:
+                        from_email = fetched_email
+                        webhook_logger.info(f"Using assignee's email {from_email} for incident {data.get('number', data.get('incident_number', 'N/A'))}")
+                    else:
+                        from_email = os.getenv("SENDER_EMAIL", "noc@infopro.com.my")
+                        webhook_logger.warning(f"Missing 'from_email' in alert data for incident {data.get('number', data.get('incident_number', 'N/A'))}. Could not fetch assignee email. Using fallback email: {from_email}")
                 else:
                     from_email = os.getenv("SENDER_EMAIL", "noc@infopro.com.my")
-                    webhook_logger.warning(f"Missing 'from_email' in alert data for incident {data.get('number', 'N/A')}. Could not fetch assignee email. Using fallback email: {from_email}")
-            else:
+                    webhook_logger.warning(f"Missing 'from_email' in alert data for incident {data.get('number', data.get('incident_number', 'N/A'))}. Assignee found, but no valid assignee ID. Using fallback email: {from_email}")
+            elif not from_email:
                 from_email = os.getenv("SENDER_EMAIL", "noc@infopro.com.my")
-                webhook_logger.warning(f"Missing 'from_email' in alert data for incident {data.get('number', 'N/A')}. Assignee found, but no valid assignee ID. Using fallback email: {from_email}")
-        elif not from_email:
-            from_email = os.getenv("SENDER_EMAIL", "noc@infopro.com.my")
-            webhook_logger.warning(f"Missing 'from_email' in alert data for incident {data.get('number', 'N/A')}. No assignees found. Using fallback email: {from_email}")
+                webhook_logger.warning(f"Missing 'from_email' in alert data for incident {data.get('number', data.get('incident_number', 'N/A'))}. No assignees found. Using fallback email: {from_email}")
 
-        alert = {
-            "severity": extract_severity_from_title(title),
-            "metric": extract_metric_from_title(title),
-            "status": status,
-            "timestamp": occurred_at,
-            "incident_number": data.get("number", "unknown"),
-            "title": title,
-            "original_metric": title,
-            "from_email": from_email
-        }
+            # Build alert object (ORIGINAL FORMAT)
+            alert = {
+                "severity": extract_severity_from_title(title),
+                "metric": extract_metric_from_title(title),
+                "status": status,
+                "timestamp": occurred_at,
+                "incident_number": data.get("incident_number") or data.get("number") or data.get("id", "unknown"),
+                "title": title,
+                "original_metric": title,
+                "from_email": from_email
+            }
 
-        webhook_logger.info(f"Processed alert: {json.dumps(alert, indent=2)}")
+            webhook_logger.info(f"Processed alert: {json.dumps(alert, indent=2)}")
 
-        # Save alert to log
-        with open(LOG_PATH, "a") as f:
-            f.write(json.dumps(alert) + "\n")
+            # Save alert to log (ORIGINAL FUNCTIONALITY)
+            with open(LOG_PATH, "a") as f:
+                f.write(json.dumps(alert) + "\n")
 
-        result = start_alert_pipeline(alert)
-        return JSONResponse(content={"status": "received", "result": result})
+            # Store baseline incident information for knowledge tracking
+            await store_incident_knowledge(str(alert["incident_number"]), [], alert)
+
+            # Start your existing alert pipeline (ORIGINAL FUNCTIONALITY)
+            result = start_alert_pipeline(alert)
+            return JSONResponse(content={"status": "received", "result": result})
+        
+        else:
+            # This shouldn't happen as we handled annotation events above
+            webhook_logger.warning(f"Unhandled event type: {event_type}")
+            return JSONResponse(content={"status": "ignored", "event_type": event_type})
 
     except ValueError as ve:
         webhook_logger.error(f"Payload parsing error: {ve}")
@@ -168,11 +527,59 @@ async def receive_alert(request: Request):
             status_code=500
         )
 
+@app.get("/knowledge/{incident_number}")
+async def get_incident_knowledge(incident_number: str):
+    """Get knowledge for a specific incident"""
+    try:
+        knowledge_base = load_knowledge_base()
+        incident_data = knowledge_base.get(incident_number, {})
+        
+        if incident_data:
+            return JSONResponse(content=incident_data)
+        else:
+            return JSONResponse(
+                content={"message": f"No knowledge found for incident {incident_number}"}, 
+                status_code=404
+            )
+    except Exception as e:
+        webhook_logger.error(f"Error retrieving knowledge: {e}")
+        return JSONResponse(
+            content={"error": str(e)}, 
+            status_code=500
+        )
+
+@app.get("/knowledge")
+async def get_all_knowledge():
+    """Get all stored knowledge"""
+    try:
+        knowledge_base = load_knowledge_base()
+        return JSONResponse(content={
+            "total_incidents": len(knowledge_base),
+            "incidents": list(knowledge_base.keys()),
+            "knowledge_stats": {
+                "with_notes": len([k for k, v in knowledge_base.items() if v.get("notes")]),
+                "with_root_cause": len([k for k, v in knowledge_base.items() if v.get("summary", {}).get("root_cause")]),
+                "false_positives": len([k for k, v in knowledge_base.items() if v.get("summary", {}).get("false_positive")]),
+                "planned_maintenance": len([k for k, v in knowledge_base.items() if v.get("summary", {}).get("planned_maintenance")]),
+                "customer_feedback": len([k for k, v in knowledge_base.items() if v.get("summary", {}).get("customer_response")]),
+                "business_context": len([k for k, v in knowledge_base.items() if v.get("summary", {}).get("business_impact")])
+            }
+        })
+    except Exception as e:
+        webhook_logger.error(f"Error retrieving all knowledge: {e}")
+        return JSONResponse(content={"error": str(e)}, status_code=500)
+
 @app.get("/config")
 async def get_config():
     return JSONResponse(content={
         "filter_enabled": FILTER_ENABLED,
-        "allowed_statuses": ALLOWED_STATUSES
+        "allowed_statuses": ALLOWED_STATUSES,
+        "knowledge_folder": CREWAI_KNOWLEDGE_BASE,
+        "knowledge_files": {
+            "incidents": os.path.exists(INCIDENT_KNOWLEDGE_FILE),
+            "patterns": os.path.exists(PATTERNS_KNOWLEDGE_FILE),
+            "business_context": os.path.exists(BUSINESS_CONTEXT_FILE)
+        }
     })
 
 @app.post("/config")
@@ -184,14 +591,14 @@ async def update_config(request: Request):
             FILTER_ENABLED = config["filter_enabled"]
         if "allowed_statuses" in config:
             ALLOWED_STATUSES = config["allowed_statuses"]
-        logging.info(f"Configuration updated: filter_enabled={FILTER_ENABLED}, allowed_statuses={ALLOWED_STATUSES}")
+        webhook_logger.info(f"Configuration updated: filter_enabled={FILTER_ENABLED}, allowed_statuses={ALLOWED_STATUSES}")
         return JSONResponse(content={
             "status": "updated",
             "filter_enabled": FILTER_ENABLED,
             "allowed_statuses": ALLOWED_STATUSES
         })
     except Exception as e:
-        logging.error(f"Configuration update failed: {e}")
+        webhook_logger.error(f"Configuration update failed: {e}")
         return JSONResponse(
             content={"status": "error", "message": f"Config update failed: {str(e)}"},
             status_code=400
@@ -199,7 +606,15 @@ async def update_config(request: Request):
 
 @app.get("/health")
 async def health_check():
-    return JSONResponse(content={"name": "pagerduty-webhook-receiver","status": "healthy","timestamp": datetime.utcnow().isoformat(), "version": "1.0.0"})  # 200 OK
+    knowledge_status = "enabled" if os.path.exists(CREWAI_KNOWLEDGE_BASE) else "disabled"
+    return JSONResponse(content={
+        "name": "pagerduty-webhook-receiver",
+        "status": "healthy",
+        "timestamp": datetime.utcnow().isoformat(),
+        "version": "1.0.0",
+        "knowledge_system": knowledge_status,
+        "knowledge_folder": CREWAI_KNOWLEDGE_BASE
+    })
 
 if __name__ == "__main__":
     import uvicorn
