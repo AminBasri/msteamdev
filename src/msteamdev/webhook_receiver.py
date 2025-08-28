@@ -20,7 +20,7 @@ FILTER_ENABLED = True
 ALLOWED_STATUSES = ["triggered", "resolved"]
 
 # CrewAI Knowledge System Configuration
-CREWAI_KNOWLEDGE_BASE = "/home/crewai/msteamdev/knowledge"
+CREWAI_KNOWLEDGE_BASE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "knowledge")
 INCIDENT_KNOWLEDGE_FILE = os.path.join(CREWAI_KNOWLEDGE_BASE, "incident_knowledge.json")
 PATTERNS_KNOWLEDGE_FILE = os.path.join(CREWAI_KNOWLEDGE_BASE, "alert_patterns.json")
 BUSINESS_CONTEXT_FILE = os.path.join(CREWAI_KNOWLEDGE_BASE, "business_context.json")

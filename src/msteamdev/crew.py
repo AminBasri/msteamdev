@@ -232,32 +232,70 @@ def acknowledge_incident(incident_number: str, from_email: str) -> str:
             performance_monitor.record_error_pattern("Complete_Acknowledgment_Failure", incident_number)
             return f"Error calling MCP server: {e}"
 
-# ENHANCED: Improve get_mcp_tools with better error handling
+# ENHANCED: Improve get_mcp_tools with knowledge base integration
 def get_mcp_tools() -> list:
-    """Load MCP tools with enhanced error handling."""
-    logger.info("Loading MCP tools...")
+    """Load MCP tools with knowledge base integration and enhanced error handling."""
+    logger.info("Loading MCP tools with knowledge base support...")
     
-    # The user suggested using FileReadTool, so we'll add it.
-    # We can configure it to read the alert and escalation logs.
+    # Legacy alert/escalation log files (kept for backward compatibility)
     alert_log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "alert_log.json")
     escalation_log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "escalation_log.json")
     
+    # Knowledge base JSON files
+    knowledge_base_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "knowledge")
+    incident_knowledge_path = os.path.join(knowledge_base_dir, "incident_knowledge.json")
+    alert_patterns_path = os.path.join(knowledge_base_dir, "alert_patterns.json")
+    business_context_path = os.path.join(knowledge_base_dir, "business_context.json")
+    
+    # Import knowledge base tools
+    try:
+        from msteamdev.tools.knowledge_base import (
+            get_incident_knowledge,
+            find_similar_incidents, 
+            analyze_resolution_patterns,
+            get_false_positive_patterns,
+            get_business_context_knowledge
+        )
+        knowledge_tools = [
+            get_incident_knowledge,
+            find_similar_incidents, 
+            analyze_resolution_patterns,
+            get_false_positive_patterns,
+            get_business_context_knowledge
+        ]
+        logger.info(f"Loaded {len(knowledge_tools)} knowledge base tools")
+    except ImportError as e:
+        logger.warning(f"Could not load knowledge base tools: {e}")
+        knowledge_tools = []
+    
     mcp_tools = [
+        # Core PagerDuty management tools
         get_incident_status, 
         acknowledge_incident,
+        
+        # Legacy alert/escalation log tools (for backward compatibility)
         read_alert_log,
         read_escalation_log,
         get_matching_alerts,
+        
+        # Enhanced analysis tools
         read_alert_log_enhanced,
         get_matching_alerts_enhanced,
         check_escalation_eligibility_enhanced,
         get_alert_trends,
         get_system_health_tool,
+        
+        # File reading tools for legacy support
         FileReadTool(file_path=alert_log_path, description="A tool to read the alert log file."),
-        FileReadTool(file_path=escalation_log_path, description="A tool to read the escalation log file.")
-    ]
+        FileReadTool(file_path=escalation_log_path, description="A tool to read the escalation log file."),
+        
+        # Knowledge base file reading tools (for direct file access by agents)
+        FileReadTool(file_path=incident_knowledge_path, description="A tool to read the incident knowledge base JSON file with historical incident data, customer feedback, root causes, and resolutions."),
+        FileReadTool(file_path=alert_patterns_path, description="A tool to read the alert patterns knowledge JSON file with false positive patterns and resolution methods by metric type."),
+        FileReadTool(file_path=business_context_path, description="A tool to read the business context knowledge JSON file with maintenance windows and business impact information."),
+    ] + knowledge_tools  # Add knowledge base tools
 
-    logger.info(f"Successfully loaded total {len(mcp_tools)} MCP tools.")
+    logger.info(f"Successfully loaded total {len(mcp_tools)} MCP tools ({len(knowledge_tools)} knowledge base tools)")
     return mcp_tools
 
 # PRESERVE YOUR retry decorator - it's excellent!
@@ -378,14 +416,18 @@ def load_agents(mcp_tools=None):
             logger.info(f"Assigned {len(tools)} PagerDuty tools to pagerduty_manager")
             
         elif name == "escalation_checker" and mcp_tools:
-            # Escalation checker gets comprehensive analysis tools
+            # Escalation checker gets comprehensive analysis tools INCLUDING knowledge base
             enhanced_tool_names = [
-                "ReadAlertLog", "ReadEscalationLog", "GetMatchingAlerts",  # Original tools
+                # Legacy tools (for backward compatibility)
+                "ReadAlertLog", "ReadEscalationLog", "GetMatchingAlerts",  
                 "ReadAlertLogEnhanced", "GetMatchingAlertsEnhanced", "CheckEscalationEligibility", 
-                "GetAlertTrends", "GetSystemHealth"  # Enhanced tools
+                "GetAlertTrends", "GetSystemHealth",
+                # NEW: Knowledge base tools for intelligent decision making
+                "GetIncidentKnowledge", "FindSimilarIncidents", "AnalyzeResolutionPatterns",
+                "GetFalsePositivePatterns", "GetBusinessContextKnowledge"
             ]
             tools = [tool for tool in mcp_tools if tool.name in enhanced_tool_names]
-            logger.info(f"Assigned {len(tools)} enhanced analysis tools to escalation_checker")
+            logger.info(f"Assigned {len(tools)} enhanced analysis tools (including knowledge base) to escalation_checker")
             
         elif name == "reporter" and mcp_tools:
             # Reporter gets trend analysis and system health tools
@@ -600,6 +642,49 @@ async def run_escalation_pipeline(alert: dict, mcp_tools: list):
 
         alert_history = await _load_log()
 
+        # NEW: Add knowledge base context for intelligent decision making
+        try:
+            from msteamdev.tools.knowledge_base import (
+                find_similar_incidents, analyze_resolution_patterns, 
+                get_false_positive_patterns, get_business_context_knowledge
+            )
+            
+            # Get knowledge base insights
+            similar_incidents_data = find_similar_incidents._run(alert['title'], alert['severity'])
+            resolution_patterns_data = analyze_resolution_patterns._run(alert['title'], alert['severity'])
+            false_positive_patterns_data = get_false_positive_patterns._run(alert['title'], alert['metric'])
+            business_context_data = get_business_context_knowledge._run(alert['title'])
+            
+            knowledge_context = f"""
+KNOWLEDGE BASE INSIGHTS:
+=========================
+
+SIMILAR INCIDENTS:
+{similar_incidents_data}
+
+RESOLUTION PATTERNS:
+{resolution_patterns_data}
+
+FALSE POSITIVE PATTERNS:
+{false_positive_patterns_data}
+
+BUSINESS CONTEXT:
+{business_context_data}
+
+KNOWLEDGE-BASED DECISION CRITERIA:
+- Have similar incidents been false positives? Check false_positive_rate
+- Are there known resolution patterns for this issue type?
+- Is this likely planned maintenance based on historical patterns?
+- What was the actual business impact of similar incidents?
+- How were similar incidents actually resolved?
+- What do customer feedback patterns suggest?
+"""
+            
+            logger.info(f"🧠 Knowledge base insights gathered for incident {incident_number}")
+        except Exception as kb_error:
+            logger.warning(f"⚠️ Could not load knowledge base insights: {kb_error}")
+            knowledge_context = "\nKNOWLEDGE BASE: Not available - using traditional escalation logic\n"
+
         context = (
             f"Alert Title: {alert['title']}\n"
             f"Severity: {alert['severity']}\n"
@@ -608,8 +693,14 @@ async def run_escalation_pipeline(alert: dict, mcp_tools: list):
             f"Incident #: {incident_number}\n\n"
             f"Policy Result: {eligible} - {reason}\n\n"
             f"Full Alert History: {json.dumps(alert_history)}\n\n"
-            f"You must verify the policy's output against the raw logs and the escalation history. Use the ReadEscalationLog tool to check past escalations. If the policy output is correct, use it to make your decision. If it is incorrect, override it and make the correct decision based on your own analysis of the alert history and escalation history.\n\n"
-            f"Should this alert be escalated to BAU?"
+            f"{knowledge_context}\n\n"
+            f"ENHANCED DECISION PROCESS:\n"
+            f"1. First, analyze the knowledge base insights above\n"
+            f"2. Consider historical patterns and outcomes\n"
+            f"3. Verify the policy's output against real-world data\n"
+            f"4. Use the ReadEscalationLog tool to check past escalations if needed\n"
+            f"5. Make your final decision based on combined policy + knowledge\n\n"
+            f"Should this alert be escalated to BAU? Consider both policy result and historical knowledge."
         )
 
         escalation_task = Task(
