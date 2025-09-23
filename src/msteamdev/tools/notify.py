@@ -3,11 +3,12 @@ import smtplib
 import logging
 import re
 import requests
+import json
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.header import Header
 from email.utils import formataddr
-from typing import Dict, Tuple
+from typing import Dict, List, Optional, Tuple, cast
 import pytz
 from datetime import datetime, timezone
 from crewai import Agent, Task, Crew
@@ -88,8 +89,13 @@ def send_rocketchat_webhook_message(message: str) -> bool:
         logger.error(f"Rocket.Chat webhook validation failed: {config_message}")
         return False
 
-    webhook_url = os.getenv("ROCKETCHAT_WEBHOOK_URL")
-    webhook_token = os.getenv("ROCKETCHAT_WEBHOOK_TOKEN")
+    webhook_url = os.getenv("ROCKETCHAT_WEBHOOK_URL", "")
+    webhook_token = os.getenv("ROCKETCHAT_WEBHOOK_TOKEN", "")
+    
+    # Type safety check
+    if not webhook_url:
+        logger.error("ROCKETCHAT_WEBHOOK_URL is not set")
+        return False
 
     payload = {
         "alias": "CrewAI Alert System",
@@ -229,8 +235,9 @@ def generate_email_content(alert: Dict, reason: str) -> Tuple[str, str]:
             })
         
         # Access structured output directly
-        if result.pydantic:
-            email_content = result.pydantic
+        if result.tasks_output and result.tasks_output[0].pydantic:
+            email_content = cast(EmailContent, result.tasks_output[0].pydantic)
+            logger.debug(f"Generated email content:\nSubject: {email_content.subject}\nBody length: {len(email_content.body)} chars")
             return email_content.subject, email_content.body
         else:
             logger.warning("No structured output available, falling back to raw parsing")
@@ -278,7 +285,11 @@ def format_rocketchat_webhook_message(alert: Dict, reason: str, recommended_acti
 
 def send_notification(alert: Dict, reason: str) -> str:
     """Send email and Rocket.Chat webhook notification for alert escalation."""
-    logger.info(f"Starting notification for incident #{alert.get('incident_number', 'N/A')}")
+    incident_number = alert.get('incident_number', 'N/A')
+    logger.info(f"Starting notification for incident #{incident_number}")
+    logger.debug(f"Alert details for #{incident_number}:\n{json.dumps(alert, indent=2)}")
+    logger.debug(f"Notification reason for #{incident_number}:\n{reason}")
+    
     try:
         # Validate SMTP configuration
         is_valid_smtp, smtp_message = validate_smtp_config()
@@ -286,13 +297,28 @@ def send_notification(alert: Dict, reason: str) -> str:
             logger.error(f"SMTP configuration validation failed: {smtp_message}")
             raise ValueError(f"SMTP configuration error: {smtp_message}")
 
+        # Get SMTP configuration with type safety
         smtp_host = os.getenv("SMTP_HOST")
+        if not smtp_host:
+            raise ValueError("SMTP_HOST environment variable is not set")
+            
         smtp_port = int(os.getenv("SMTP_PORT", "587"))
         smtp_user = os.getenv("SMTP_USERNAME")
+        if not smtp_user:
+            raise ValueError("SMTP_USERNAME environment variable is not set")
+            
         smtp_pass = os.getenv("SMTP_PASSWORD")
+        if not smtp_pass:
+            raise ValueError("SMTP_PASSWORD environment variable is not set")
+            
         recipients = [email.strip() for email in os.getenv("ALERT_EMAIL_RECIPIENTS", "").split(",") if email.strip()]
+        if not recipients:
+            raise ValueError("ALERT_EMAIL_RECIPIENTS environment variable is not set or empty")
+            
         sender_name = os.getenv("SENDER_NAME", "CrewAI Escalation Alert System")
         sender_email = os.getenv("SENDER_EMAIL", smtp_user)
+        if not sender_email:
+            raise ValueError("Neither SENDER_EMAIL nor SMTP_USERNAME is set")
 
         logger.info(f"SMTP Config - Host: {smtp_host}, Port: {smtp_port}, User: {smtp_user}")
         logger.info(f"Recipients: {len(recipients)} addresses")
@@ -346,9 +372,20 @@ def test_smtp_connection() -> bool:
             return False
 
         smtp_host = os.getenv("SMTP_HOST")
+        if not smtp_host:
+            logger.error("SMTP_HOST environment variable is not set")
+            return False
+            
         smtp_port = int(os.getenv("SMTP_PORT", "587"))
         smtp_user = os.getenv("SMTP_USERNAME")
+        if not smtp_user:
+            logger.error("SMTP_USERNAME environment variable is not set")
+            return False
+            
         smtp_pass = os.getenv("SMTP_PASSWORD")
+        if not smtp_pass:
+            logger.error("SMTP_PASSWORD environment variable is not set")
+            return False
 
         logger.info(f"Testing SMTP connection to {smtp_host}:{smtp_port}")
         with smtplib.SMTP(smtp_host, smtp_port) as server:
