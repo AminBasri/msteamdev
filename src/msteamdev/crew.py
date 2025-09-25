@@ -3,6 +3,7 @@ import os
 import sys
 import yaml
 from threading import Thread
+from enum import Enum
 from datetime import datetime, timedelta, timezone, time
 from functools import wraps
 from dataclasses import asdict
@@ -56,6 +57,11 @@ from msteamdev.tools.redis_client import cache_set_add, cache_set_remove, cache_
 from msteamdev.tools.tiered_decision import tiered_framework
 from msteamdev.tools.intelligent_policy import intelligent_escalation_policy
 from msteamdev.tools.decision_audit import log_decision_audit
+
+def enum_serializer(obj):
+    if isinstance(obj, Enum):
+        return obj.value
+    raise TypeError(f"Object of type {obj.__class__.__name__} is not JSON serializable")
 
 # Import only essential enhanced tools
 from msteamdev.tools.enhanced_tools import (
@@ -808,7 +814,7 @@ KNOWLEDGE BASE INSIGHTS:
         # Log the decision
         log_decision_audit.run(
             incident_number=incident_number,
-            decision_result=json.dumps(asdict(decision_result)),
+            decision_result=json.dumps(asdict(decision_result), default=enum_serializer),
             alert_data=json.dumps(alert),
             policy_result=json.dumps(policy_result_dict),
             ai_analysis=ai_analysis,
