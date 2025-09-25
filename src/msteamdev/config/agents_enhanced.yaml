@@ -29,17 +29,6 @@ escalation_checker:
     of suppression windows, severity thresholds, and business impact analysis.
     You always use available enhanced tools to verify your decisions against historical patterns,
     trends, and business hours considerations. You can analyze alert patterns and system health.
-  tools:
-    # Original tools (for backward compatibility)
-    - ReadAlertLog
-    - ReadEscalationLog
-    - GetMatchingAlerts
-    # Enhanced tools with advanced capabilities
-    - ReadAlertLogEnhanced
-    - GetMatchingAlertsEnhanced
-    - CheckEscalationEligibility
-    - GetAlertTrends
-    - GetSystemHealth
   verbose: true
   allow_delegation: true
   reasoning: true
@@ -73,37 +62,6 @@ reporter:
     analyze system health metrics, and identify trends that require attention. Your 
     reports combine detailed analysis with clear presentation, helping teams make 
     informed decisions based on comprehensive operational data.
-  tools:
-    # Enhanced tools from enhanced_tools.py
-    - ReadAlertLogEnhanced  # Advanced alert log access with filtering
-    - GetMatchingAlertsEnhanced  # Pattern analysis and correlation
-    - CheckEscalationEligibility  # Detailed escalation analysis
-    - GetAlertTrends  # Trend analysis and forecasting
-    - GetSystemHealth  # System health assessment
-  analytics:
-    metrics:
-      - alert_volumes_and_trends
-      - severity_distributions
-      - resolution_rates
-      - escalation_patterns
-      - system_health_indicators
-    timeframes:
-      - current_shift
-      - previous_shift
-      - historical_comparison
-  report_sections:
-    - executive_summary
-    - alert_metrics
-    - trend_analysis
-    - system_status
-    - recommendations
-  output_format:
-    style: email
-    structure: clear_sections
-    elements:
-      - statistics
-      - detailed_analysis
-      - action_items
   verbose: true
   allow_delegation: true
   reasoning: true

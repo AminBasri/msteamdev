@@ -1,24 +1,15 @@
 import os
 import smtplib
 import logging
-import re
 import requests
 import json
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.header import Header
 from email.utils import formataddr
-from typing import Dict, List, Optional, Tuple, cast
+from typing import Dict
 import pytz
 from datetime import datetime, timezone
-from crewai import Agent, Task, Crew
-from msteamdev.crew import load_agents, load_yaml
-from msteamdev.models import RecommendedActions, EmailContent, TechnicalAction
-from functools import wraps
-import time
-import openlit
-
-openlit.init()
 
 from msteamdev.logging_setup import get_module_logger
 
@@ -26,22 +17,6 @@ from msteamdev.logging_setup import get_module_logger
 logger = get_module_logger('notify', log_filename='notify.log', level=logging.INFO)
 
 LOCAL_TZ = pytz.timezone('Asia/Singapore')
-
-def retry(max_attempts=3, delay=2):
-    """Retry decorator for CrewAI tasks."""
-    def decorator(func):
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            for attempt in range(max_attempts):
-                try:
-                    return func(*args, **kwargs)
-                except Exception as e:
-                    if attempt == max_attempts - 1:
-                        raise
-                    time.sleep(delay * (2 ** attempt))
-                    logger.warning(f"Retry {attempt + 1}/{max_attempts} for {func.__name__}: {e}")
-        return wrapper
-    return decorator
 
 def validate_smtp_config() -> tuple[bool, str]:
     """Validate SMTP configuration."""
@@ -92,7 +67,6 @@ def send_rocketchat_webhook_message(message: str) -> bool:
     webhook_url = os.getenv("ROCKETCHAT_WEBHOOK_URL", "")
     webhook_token = os.getenv("ROCKETCHAT_WEBHOOK_TOKEN", "")
     
-    # Type safety check
     if not webhook_url:
         logger.error("ROCKETCHAT_WEBHOOK_URL is not set")
         return False
@@ -118,299 +92,44 @@ def send_rocketchat_webhook_message(message: str) -> bool:
         logger.error(f"Failed to send Rocket.Chat webhook message: {e}")
         return False
 
-@retry()
-def generate_recommended_actions(alert: Dict) -> RecommendedActions:
-    """Generate context-specific recommended actions using CrewAI."""
-    try:
-        incident_number = alert.get('incident_number', 'N/A')
-        agents = load_agents()
-        tasks_def = load_yaml("src/msteamdev/config/tasks.yaml")
-        action_recommender = agents.get("action_recommender")
-        if not action_recommender:
-            logger.error("Missing action_recommender agent")
-            return RecommendedActions(actions=[
-                TechnicalAction(
-                    description=f"Investigate {alert.get('metric', 'system')} usage",
-                    priority_level=3,
-                    estimated_time_minutes=15,
-                    required_tools=[],
-                    success_criteria="Usage within normal thresholds"
-                ),
-                TechnicalAction(
-                    description="Check running processes and services",
-                    priority_level=3,
-                    estimated_time_minutes=10,
-                    required_tools=[],
-                    success_criteria="All critical services are running"
-                ),
-                TechnicalAction(
-                    description="Document findings and resolution steps",
-                    priority_level=2,
-                    estimated_time_minutes=5,
-                    required_tools=[],
-                    success_criteria="Notes saved to incident record"
-                )
-            ])
-
-        task = Task(
-            description=tasks_def["recommend_actions"]["description"].format(
-                title=alert.get('title', 'Unknown'),
-                severity=alert.get('severity', 'Unknown').upper(),
-                metric=alert.get('metric', 'Unknown'),
-                incident_number=incident_number
-            ),
-            expected_output=tasks_def["recommend_actions"]["expected_output"],
-            agent=action_recommender,
-            output_pydantic=RecommendedActions
-        )
-        crew = Crew(agents=[action_recommender], tasks=[task], verbose=True)
-        with openlit.start_trace(name=f"Recommended_Actions_{incident_number}") as trace:
-            result = crew.kickoff()
-            trace.set_metadata({
-                "incident_number": incident_number,
-                "agent": "action_recommender"
-            })
-        return result.tasks_output[0].pydantic
-    except Exception as e:
-        logger.error(f"Failed to generate recommended actions for incident {alert.get('incident_number', 'N/A')}: {e}")
-        return RecommendedActions(actions=[
-            TechnicalAction(
-                description=f"Investigate {alert.get('metric', 'system')} usage",
-                priority_level=3,
-                estimated_time_minutes=15,
-                required_tools=[],
-                success_criteria="Usage within normal thresholds"
-            ),
-            TechnicalAction(
-                description="Check running processes and services",
-                priority_level=3,
-                estimated_time_minutes=10,
-                required_tools=[],
-                success_criteria="All critical services are running"
-            ),
-            TechnicalAction(
-                description="Document findings and resolution steps",
-                priority_level=2,
-                estimated_time_minutes=5,
-                required_tools=[],
-                success_criteria="Notes saved to incident record"
-            )
-        ])
-
-@retry()
-def generate_email_content(alert: Dict, reason: str) -> Tuple[str, str]:
-    """Generate email subject and body using structured output."""
-    try:
-        incident_number = alert.get('incident_number', 'N/A')
-        # Generate recommended actions first
-        recommended_actions = generate_recommended_actions(alert)
-        actions_text = recommended_actions.format_for_email()
-
-        agents = load_agents()
-        tasks_def = load_yaml("src/msteamdev/config/tasks.yaml")
-        communicator_agent = agents.get("communicator")
-        if not communicator_agent:
-            logger.error("Missing communicator agent")
-            return format_alert_email(alert, reason, actions_text)
-
-        task = Task(
-            description=tasks_def["notify_bau"]["description"].format(
-                title=alert.get('title', 'Unknown'),
-                severity=alert.get('severity', 'Unknown').upper(),
-                metric=alert.get('metric', 'Unknown'),
-                incident_number=incident_number,
-                reason=reason,
-                recommended_actions=actions_text
-            ),
-            expected_output=tasks_def["notify_bau"]["expected_output"],
-            agent=communicator_agent,
-            output_pydantic=EmailContent
-        )
-        crew = Crew(agents=[communicator_agent], tasks=[task], verbose=True)
-        with openlit.start_trace(name=f"Email_Content_{incident_number}") as trace:
-            result = crew.kickoff()
-            trace.set_metadata({
-                "incident_number": incident_number,
-                "agent": "communicator"
-            })
-        
-        # Access structured output directly
-        if result.tasks_output and result.tasks_output[0].pydantic:
-            email_content = cast(EmailContent, result.tasks_output[0].pydantic)
-            logger.debug(f"Generated email content:\nSubject: {email_content.subject}\nBody length: {len(email_content.body)} chars")
-            return email_content.subject, email_content.body
-        else:
-            logger.warning("No structured output available, falling back to raw parsing")
-            return format_alert_email(alert, reason, actions_text)
-            
-    except Exception as e:
-        logger.error(f"Failed to generate email content for incident {alert.get('incident_number', 'N/A')}: {e}")
-        return format_alert_email(alert, reason, actions_text)
-
-def format_alert_email(alert: Dict, reason: str, recommended_actions: str) -> tuple[str, str]:
-    """Generate fallback email content with recommended actions."""
-    alert_timestamp_utc = datetime.fromisoformat(alert.get('timestamp', 'N/A').replace("Z", "+00:00")).replace(tzinfo=timezone.utc)
-    alert_timestamp_local = alert_timestamp_utc.astimezone(LOCAL_TZ).strftime('%Y-%m-%d %H:%M:%S')
-    subject = f"{alert['title']} - {alert['severity'].capitalize()} Alert"
-    body = (
-        f"Dear Team,\n\n"
-        f"A {alert['severity'].capitalize()} alert has been triggered:\n\n"
-        f"- Incident Number: {alert.get('incident_number', 'N/A')}\n"
-        f"- Severity: {alert['severity'].capitalize()}\n"
-        f"- Metric: {alert.get('metric', 'Unknown')}\n"
-        f"- Timestamp: {alert_timestamp_local} (+08)\n"
-        f"- Reason: {reason}\n"
-        f"- Recommended Actions:\n{recommended_actions}\n\n"
-        f"Please investigate immediately to prevent disruptions.\n\n"
-        f"Best regards,\n"
-        f"CrewAI Alert Management System\n"
-        f"Managed Service Team"
-    )
-    return subject, body
-
-def format_rocketchat_webhook_message(alert: Dict, reason: str, recommended_actions: str) -> str:
-    """Format alert message for Rocket.Chat webhook."""
-    alert_timestamp_utc = datetime.fromisoformat(alert.get('timestamp', 'N/A').replace("Z", "+00:00")).replace(tzinfo=timezone.utc)
-    alert_timestamp_local = alert_timestamp_utc.astimezone(LOCAL_TZ).strftime('%Y-%m-%d %H:%M:%S')
-    return (
-        f"**{alert['title']} - {alert['severity'].capitalize()} Alert**\n\n"
-        f"- Incident Number: {alert.get('incident_number', 'N/A')}\n"
-        f"- Severity: {alert['severity'].capitalize()}\n"
-        f"- Metric: {alert.get('metric', 'Unknown')}\n"
-        f"- Timestamp: {alert_timestamp_local} (+08)\n"
-        f"- Reason: {reason}\n"
-        f"- Recommended Actions:\n{recommended_actions}\n\n"
-        f"Please investigate immediately to prevent disruptions."
-    )
-
-def send_notification(alert: Dict, reason: str) -> str:
+def send_notification(alert: Dict, subject: str, body: str) -> str:
     """Send email and Rocket.Chat webhook notification for alert escalation."""
     incident_number = alert.get('incident_number', 'N/A')
     logger.info(f"Starting notification for incident #{incident_number}")
-    logger.debug(f"Alert details for #{incident_number}:\n{json.dumps(alert, indent=2)}")
-    logger.debug(f"Notification reason for #{incident_number}:\n{reason}")
     
     try:
-        # Validate SMTP configuration
         is_valid_smtp, smtp_message = validate_smtp_config()
         if not is_valid_smtp:
             logger.error(f"SMTP configuration validation failed: {smtp_message}")
             raise ValueError(f"SMTP configuration error: {smtp_message}")
 
-        # Get SMTP configuration with type safety
         smtp_host = os.getenv("SMTP_HOST")
-        if not smtp_host:
-            raise ValueError("SMTP_HOST environment variable is not set")
-            
         smtp_port = int(os.getenv("SMTP_PORT", "587"))
         smtp_user = os.getenv("SMTP_USERNAME")
-        if not smtp_user:
-            raise ValueError("SMTP_USERNAME environment variable is not set")
-            
         smtp_pass = os.getenv("SMTP_PASSWORD")
-        if not smtp_pass:
-            raise ValueError("SMTP_PASSWORD environment variable is not set")
-            
         recipients = [email.strip() for email in os.getenv("ALERT_EMAIL_RECIPIENTS", "").split(",") if email.strip()]
-        if not recipients:
-            raise ValueError("ALERT_EMAIL_RECIPIENTS environment variable is not set or empty")
-            
         sender_name = os.getenv("SENDER_NAME", "CrewAI Escalation Alert System")
         sender_email = os.getenv("SENDER_EMAIL", smtp_user)
-        if not sender_email:
-            raise ValueError("Neither SENDER_EMAIL nor SMTP_USERNAME is set")
 
-        logger.info(f"SMTP Config - Host: {smtp_host}, Port: {smtp_port}, User: {smtp_user}")
-        logger.info(f"Recipients: {len(recipients)} addresses")
-
-        # Generate email content
-        recommended_actions = generate_recommended_actions(alert)
-        actions_text = recommended_actions.format_for_email()
-        subject, body = generate_email_content(alert, reason)
-
-        # Send email
         msg = MIMEMultipart()
         msg["From"] = formataddr((str(Header(sender_name, 'utf-8')), sender_email))
         msg["To"] = ", ".join(recipients)
         msg["Subject"] = subject
         msg.attach(MIMEText(body, "plain"))
 
-        try:
-            with smtplib.SMTP(smtp_host, smtp_port) as server:
-                server.starttls()
-                server.login(smtp_user, smtp_pass)
-                server.sendmail(smtp_user, recipients, msg.as_string())
-                logger.info(f"Email notification sent successfully to {len(recipients)} recipients")
-        except smtplib.SMTPAuthenticationError:
-            logger.error("SMTP authentication failed")
-            raise
-        except smtplib.SMTPException as se:
-            logger.error(f"SMTP error: {se}")
-            raise
+        with smtplib.SMTP(smtp_host, smtp_port) as server:
+            server.starttls()
+            server.login(smtp_user, smtp_pass)
+            server.sendmail(sender_email, recipients, msg.as_string())
+            logger.info(f"Email notification sent successfully to {len(recipients)} recipients")
 
         # Send Rocket.Chat webhook notification
-        rocketchat_message = format_rocketchat_webhook_message(alert, reason, actions_text)
-        if send_rocketchat_webhook_message(rocketchat_message):
-            logger.info(f"Rocket.Chat webhook notification sent successfully for incident #{alert.get('incident_number', 'N/A')}")
+        if send_rocketchat_webhook_message(body):
+            logger.info(f"Rocket.Chat webhook notification sent successfully for incident #{incident_number}")
         else:
             logger.warning("Rocket.Chat webhook notification failed, but email was sent")
 
         return f"Notifications sent successfully: email to {len(recipients)} recipients, Rocket.Chat webhook message sent"
-    except ValueError as ve:
-        logger.error(f"Configuration error: {ve}")
-        raise
-    except Exception as e:
+    except (ValueError, smtplib.SMTPException) as e:
         logger.error(f"Failed to send notifications: {e}")
         raise
-
-def test_smtp_connection() -> bool:
-    """Test SMTP connection without sending an email."""
-    try:
-        is_valid, config_message = validate_smtp_config()
-        if not is_valid:
-            logger.error(f"Invalid configuration: {config_message}")
-            return False
-
-        smtp_host = os.getenv("SMTP_HOST")
-        if not smtp_host:
-            logger.error("SMTP_HOST environment variable is not set")
-            return False
-            
-        smtp_port = int(os.getenv("SMTP_PORT", "587"))
-        smtp_user = os.getenv("SMTP_USERNAME")
-        if not smtp_user:
-            logger.error("SMTP_USERNAME environment variable is not set")
-            return False
-            
-        smtp_pass = os.getenv("SMTP_PASSWORD")
-        if not smtp_pass:
-            logger.error("SMTP_PASSWORD environment variable is not set")
-            return False
-
-        logger.info(f"Testing SMTP connection to {smtp_host}:{smtp_port}")
-        with smtplib.SMTP(smtp_host, smtp_port) as server:
-            server.starttls()
-            server.login(smtp_user, smtp_pass)
-            logger.info("SMTP connection test successful")
-            return True
-    except Exception as e:
-        logger.error(f"SMTP connection test failed: {e}")
-        return False
-
-def test_rocketchat_webhook() -> bool:
-    """Test Rocket.Chat webhook connection with a test message."""
-    try:
-        is_valid, config_message = validate_rocketchat_webhook()
-        if not is_valid:
-            logger.error(f"Invalid Rocket.Chat webhook configuration: {config_message}")
-            return False
-
-        test_message = "This is a test message from CrewAI Alert System"
-        return send_rocketchat_webhook_message(test_message)
-    except Exception as e:
-        logger.error(f"Rocket.Chat webhook test failed: {e}")
-        return False
-
-if __name__ == "__main__":
-    test_smtp_connection()
-    test_rocketchat_webhook()

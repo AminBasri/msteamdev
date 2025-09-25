@@ -124,13 +124,14 @@ def get_incident_knowledge(incident_number: str) -> str:
         }, indent=2)
 
 @tool("FindSimilarIncidents")
-def find_similar_incidents(alert_title: str, severity: str = None, limit: int = 5) -> str:
+def find_similar_incidents(alert_title: str, severity: str = None, metric: str = None, limit: int = 5) -> str:
     """
-    Find similar incidents based on alert title and severity, with their resolutions and outcomes.
+    Find similar incidents based on alert title, severity and metric, with their resolutions and outcomes.
     
     Args:
         alert_title: The alert title to find similar incidents for
         severity: Optional severity filter (critical, warning, etc.)
+        metric: Optional metric filter (e.g., cpu, memory)
         limit: Maximum number of similar incidents to return
     
     Returns:
@@ -143,7 +144,12 @@ def find_similar_incidents(alert_title: str, severity: str = None, limit: int = 
         for incident_num, incident_data in knowledge.items():
             incident_title = incident_data.get("title", "")
             incident_severity = incident_data.get("severity", "").lower()
-            
+            incident_metric = incident_data.get("metric", "").lower()
+
+            # Filter by metric if provided
+            if metric and incident_metric != metric.lower():
+                continue
+
             # Calculate similarity
             sim_score = similarity_score(alert_title, incident_title)
             
@@ -174,6 +180,7 @@ def find_similar_incidents(alert_title: str, severity: str = None, limit: int = 
             "query": {
                 "alert_title": alert_title,
                 "severity_filter": severity,
+                "metric_filter": metric,
                 "limit": limit
             },
             "total_found": len(similar_incidents),
@@ -191,13 +198,14 @@ def find_similar_incidents(alert_title: str, severity: str = None, limit: int = 
         }, indent=2)
 
 @tool("AnalyzeResolutionPatterns") 
-def analyze_resolution_patterns(alert_title: str, severity: str = None) -> str:
+def analyze_resolution_patterns(alert_title: str, severity: str = None, metric: str = None) -> str:
     """
     Analyze how similar alerts were actually resolved in the past.
     
     Args:
         alert_title: The alert title to analyze patterns for
         severity: Optional severity filter
+        metric: Optional metric filter
     
     Returns:
         JSON string with resolution analysis and recommendations
@@ -214,7 +222,12 @@ def analyze_resolution_patterns(alert_title: str, severity: str = None) -> str:
         for incident_num, incident_data in knowledge.items():
             incident_title = incident_data.get("title", "")
             incident_severity = incident_data.get("severity", "").lower()
+            incident_metric = incident_data.get("metric", "").lower()
             summary = incident_data.get("summary", {})
+
+            # Filter by metric if provided
+            if metric and incident_metric != metric.lower():
+                continue
             
             # Check similarity
             sim_score = similarity_score(alert_title, incident_title)
@@ -236,7 +249,7 @@ def analyze_resolution_patterns(alert_title: str, severity: str = None) -> str:
         
         # Analyze patterns from pattern knowledge base
         metric_patterns = {}
-        extracted_metric = _extract_metric_from_title(alert_title)
+        extracted_metric = metric or _extract_metric_from_title(alert_title)
         if extracted_metric in pattern_knowledge:
             metric_patterns = pattern_knowledge[extracted_metric]
         
@@ -310,15 +323,15 @@ def get_false_positive_patterns(alert_title: str = None, metric: str = None) -> 
                 }
                 
                 # If filtering by alert title or metric
+                if metric and incident_info["metric"].lower() != metric.lower():
+                    continue
+
                 if alert_title:
                     if similarity_score(alert_title, incident_info["title"]) > 0.3:
                         false_positive_incidents.append(incident_info)
-                elif metric:
-                    if incident_info["metric"].lower() == metric.lower():
-                        false_positive_incidents.append(incident_info)
                 else:
                     false_positive_incidents.append(incident_info)
-        
+
         # Get pattern-based false positive indicators
         pattern_indicators = {}
         if metric and metric in pattern_knowledge:
@@ -352,13 +365,14 @@ def get_false_positive_patterns(alert_title: str = None, metric: str = None) -> 
         }, indent=2)
 
 @tool("GetBusinessContextKnowledge")
-def get_business_context_knowledge(alert_title: str = None) -> str:
+def get_business_context_knowledge(alert_title: str = None, metric: str = None) -> str:
     """
     Get business context knowledge about alerts including maintenance windows,
     customer impact patterns, and business-critical vs non-critical classifications.
     
     Args:
         alert_title: Optional alert title to get specific business context for
+        metric: Optional metric filter
     
     Returns:
         JSON string with business context knowledge
@@ -372,7 +386,12 @@ def get_business_context_knowledge(alert_title: str = None) -> str:
         
         for incident_num, incident_data in knowledge.items():
             summary = incident_data.get("summary", {})
-            
+            incident_metric = incident_data.get("metric", "").lower()
+
+            # Filter by metric if provided
+            if metric and incident_metric != metric.lower():
+                continue
+
             # Check if this incident has business context
             has_business_context = any([
                 summary.get("planned_maintenance"),
@@ -407,6 +426,7 @@ def get_business_context_knowledge(alert_title: str = None) -> str:
         result = {
             "query": {
                 "alert_title": alert_title,
+                "metric_filter": metric,
                 "filtered": alert_title is not None
             },
             "business_context_incidents": business_contexts[:10],  # Top 10 most relevant

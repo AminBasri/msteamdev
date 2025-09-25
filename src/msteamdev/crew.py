@@ -16,7 +16,7 @@ from crewai import Agent, Task, Crew, Process
 from crewai.agent import Agent as BaseAgent
 from crewai.task import Task as BaseTask
 from msteamdev.llm import get_llm
-from msteamdev.tools.alert_store import check_escalation_eligibility, _load_log
+from msteamdev.tools.alert_store import _load_log, save_escalation_log_sync
 
 # Enhance Agent and Task classes with logging
 class LoggedAgent(BaseAgent):
@@ -52,14 +52,13 @@ class LoggedTask(BaseTask):
 from crewai.tools import tool
 from pdpyras import APISession
 from msteamdev.tools.redis_client import cache_set_add, cache_set_remove, cache_set_is_member
-from msteamdev.tools.alert_store import (
-    read_escalation_log,
-    get_matching_alerts,
-)
+from msteamdev.tools.tiered_decision import tiered_framework
+from msteamdev.tools.intelligent_policy import intelligent_escalation_policy
+from msteamdev.tools.decision_audit import log_decision_audit
+
 # Import only essential enhanced tools
 from msteamdev.tools.enhanced_tools import (
     read_alert_log_enhanced,
-    check_escalation_eligibility_enhanced,
     get_alert_trends,
     get_system_health as get_system_health_tool,
 )
@@ -266,7 +265,7 @@ def read_alerts_unified(query_type: str = "all", incident_number: str = None, ho
     
     try:
         # Use the enhanced version for better functionality
-        result = read_alert_log_enhanced._run(hours_back=hours_back, filter_status=None, filter_severity=None)
+        result = read_alert_log_enhanced._run(hours_back=hours_back, severity_filter=None)
         
         if incident_number:
             # Filter for specific incident if requested
@@ -306,13 +305,13 @@ def query_knowledge_base(query_type: str, alert_title: str = "", alert_severity:
         
         if query_type in ["similar_incidents", "all"]:
             try:
-                results["similar_incidents"] = find_similar_incidents._run(alert_title, alert_severity)
+                results["similar_incidents"] = find_similar_incidents._run(alert_title, alert_severity, alert_metric)
             except Exception as e:
                 results["similar_incidents"] = f"Error: {e}"
         
         if query_type in ["resolution_patterns", "all"]:
             try:
-                results["resolution_patterns"] = analyze_resolution_patterns._run(alert_title, alert_severity)
+                results["resolution_patterns"] = analyze_resolution_patterns._run(alert_title, alert_severity, alert_metric)
             except Exception as e:
                 results["resolution_patterns"] = f"Error: {e}"
         
@@ -324,7 +323,7 @@ def query_knowledge_base(query_type: str, alert_title: str = "", alert_severity:
         
         if query_type in ["business_context", "all"]:
             try:
-                results["business_context"] = get_business_context_knowledge._run(alert_title)
+                results["business_context"] = get_business_context_knowledge._run(alert_title, alert_metric)
             except Exception as e:
                 results["business_context"] = f"Error: {e}"
         
@@ -351,31 +350,7 @@ def query_knowledge_base(query_type: str, alert_title: str = "", alert_severity:
     finally:
         tool_usage_tracker.track_usage("KnowledgeQuery", time.time() - start_time, success)
 
-@tool("EnhancedEscalationCheck")
-def enhanced_escalation_check(alert_context: dict, include_knowledge: bool = True) -> str:
-    """
-    Enhanced escalation eligibility check that combines policy rules with knowledge base insights.
-    """
-    start_time = time.time()
-    success = False
-    
-    try:
-        # Use the enhanced eligibility check
-        result = check_escalation_eligibility_enhanced._run(
-            incident_number=alert_context.get("incident_number", ""),
-            title=alert_context.get("title", ""),
-            severity=alert_context.get("severity", ""),
-            timestamp=alert_context.get("timestamp", ""),
-            metric=alert_context.get("metric", "")
-        )
-        
-        success = True
-        return result
-    except Exception as e:
-        logger.error(f"EnhancedEscalationCheck failed: {e}")
-        return f"Error checking escalation eligibility: {e}"
-    finally:
-        tool_usage_tracker.track_usage("EnhancedEscalationCheck", time.time() - start_time, success)
+
 
 # OPTIMIZED TOOL LOADING - Agent-specific and minimal
 
@@ -393,7 +368,6 @@ def get_tools_for_agent(agent_type: str) -> list:
         
         "escalation_checker": [
             read_alerts_unified,        # Replaces 3+ alert reading tools
-            enhanced_escalation_check,  # Replaces multiple escalation tools  
             query_knowledge_base,       # Replaces 5+ knowledge tools
             get_system_health_tool,     # System context
         ],
@@ -681,6 +655,7 @@ async def check_and_acknowledge_alert_task(alert: dict, max_retries=3):
                         "tools_used": len(pagerduty_manager.tools)
                     })
                 
+                logger.info(f"Raw acknowledgment task result for incident {incident_number}: {result}")
                 logger.debug(f"Task output for incident {incident_number}: {result}")
 
                 if isinstance(result, str):
@@ -748,7 +723,7 @@ async def check_and_acknowledge_alert_task(alert: dict, max_retries=3):
 
 @retry()
 async def run_escalation_pipeline(alert: dict):
-    """Run the optimized escalation pipeline with streamlined agents and tools."""
+    """Run the optimized escalation pipeline with the Tiered Decision Framework."""
     start_time = time.time()
     incident_number = alert["incident_number"]
     logger.info(f"Escalation pipeline triggered for incident {incident_number} (optimized)")
@@ -765,133 +740,109 @@ async def run_escalation_pipeline(alert: dict):
             
             return {"status": "resolved", "message": "Alert resolved, escalation canceled"}
 
-        # Load optimized agents with context-aware tools
+        # Load agents and tasks
         agents = load_agents_optimized(alert)
         tasks_def = load_tasks()
         escalation_agent = agents.get("escalation_checker")
-        communicator_agent = agents.get("communicator")
 
-        if not escalation_agent or not communicator_agent:
-            logger.error("Missing required agents")
-            cache_set_remove(ESCALATION_SET_NAME, incident_number)
-            
-            duration = time.time() - start_time
-            performance_monitor.record_processing(incident_number, duration, "failed", "missing_agents")
-            performance_monitor.record_error_pattern("Missing_Required_Agents", incident_number)
-            
-            return {"status": "error", "message": "Missing required agents"}
+        if not escalation_agent:
+            logger.error("Missing required escalation_checker agent")
+            # handle error appropriately
+            return {"status": "error", "message": "Missing required escalation_checker agent"}
 
-        # Use optimized policy check
-        eligible, reason = await check_escalation_eligibility(alert)
-        logger.info(f"Policy check for incident {incident_number}: {eligible}, Reason: {reason}")
-
-        # Build enhanced context with knowledge base insights using unified tool
-        alert_context = {
-            "incident_number": incident_number,
-            "title": alert['title'],
-            "severity": alert['severity'],
-            "timestamp": alert['timestamp'],
-            "metric": alert.get('metric', '')
-        }
-
-        # Get knowledge base insights through unified tool
+        # Get Knowledge Base insights for the agent
         knowledge_context = ""
         try:
+            knowledge_base_freshness = "Knowledge base freshness: Unknown"
+            alert_patterns_path = os.path.join(os.path.dirname(__file__), '..', '..', 'knowledge', 'alert_patterns.json')
+            if os.path.exists(alert_patterns_path):
+                with open(alert_patterns_path, 'r') as f:
+                    patterns_data = json.load(f)
+                    metric = alert.get('metric', '').lower()
+                    if metric in patterns_data:
+                        last_updated_str = patterns_data[metric].get("last_updated")
+                    else:
+                        last_updated_str = None
+
+                    if last_updated_str:
+                        last_updated = datetime.fromisoformat(last_updated_str.replace("Z", "+00:00"))
+                        now = datetime.now(timezone.utc)
+                        age = now - last_updated
+                        days = age.days
+                        hours, remainder = divmod(age.seconds, 3600)
+                        minutes, _ = divmod(remainder, 60)
+                        knowledge_base_freshness = f"Knowledge base patterns last updated: {days} days, {hours} hours, {minutes} minutes ago."
+
             knowledge_insights = query_knowledge_base._run("all", alert['title'], alert['severity'], alert.get('metric', ''))
             knowledge_context = f"""
 KNOWLEDGE BASE INSIGHTS:
 =========================
 {knowledge_insights}
 
-ENHANCED DECISION CRITERIA:
-- Review similar incidents and their outcomes
-- Check false positive patterns for this metric type
-- Consider business context and maintenance windows
-- Analyze historical resolution patterns
-- Factor in customer impact data
+{knowledge_base_freshness}
 """
             logger.info(f"Knowledge base insights gathered for incident {incident_number}")
         except Exception as kb_error:
             logger.warning(f"Could not load knowledge base insights: {kb_error}")
-            knowledge_context = "\nKNOWLEDGE BASE: Not available - using traditional escalation logic\n"
+            knowledge_context = "\nKNOWLEDGE BASE: Not available\n"
 
-        context = (
-            f"Alert Title: {alert['title']}\n"
-            f"Severity: {alert['severity']}\n"
-            f"Occurred At: {alert['timestamp']}\n"
-            f"Metric: {alert.get('metric', 'N/A')}\n"
-            f"Incident #: {incident_number}\n\n"
-            f"Policy Result: {eligible} - {reason}\n\n"
-            f"{knowledge_context}\n\n"
-            f"DECISION PROCESS:\n"
-            f"1. Analyze knowledge base insights above\n"
-            f"2. Consider historical patterns and outcomes\n"
-            f"3. Verify policy output against real-world data\n"
-            f"4. Make final decision based on combined policy + knowledge\n\n"
-            f"Should this alert be escalated to BAU?"
-        )
-
-        escalation_task = Task(
-            description=tasks_def["evaluate_escalation"]["description"] + "\n\n" + context,
-            expected_output=tasks_def["evaluate_escalation"]["expected_output"],
+        # Create a task for the AI to provide an analysis
+        ai_analysis_task = Task(
+            description=f"Analyze the following alert and provide an escalation recommendation based on the provided knowledge base context.\n\nAlert: {json.dumps(alert)}\n\n{knowledge_context}",
+            expected_output="A detailed analysis and recommendation on whether to escalate or suppress the alert.",
             agent=escalation_agent
         )
 
-        notification_task = Task(
-            description=tasks_def["notify_bau"]["description"] + "\n\nAlert Details:\n" + context + "\n\nIf escalation is required, compose a message and prepare for email.",
-            expected_output=tasks_def["notify_bau"]["expected_output"],
-            agent=communicator_agent,
-            context=[escalation_task]
+        crew = Crew(agents=[escalation_agent], tasks=[ai_analysis_task], verbose=True)
+        ai_analysis_result = await crew.kickoff_async()
+        ai_analysis = str(ai_analysis_result.raw or "")
+
+        # Get policy result from the intelligent policy
+        policy_result_str = intelligent_escalation_policy.run(json.dumps(alert))
+        policy_result = json.loads(policy_result_str)
+
+        # Make decision using the Tiered Decision Framework
+        decision_result_str = tiered_framework.make_decision(alert, policy_result, None, ai_analysis)
+        decision_result = json.loads(decision_result_str)
+
+        # Log the decision
+        log_decision_audit.run(
+            incident_number=incident_number,
+            decision_result=json.dumps(decision_result),
+            alert_data=json.dumps(alert),
+            policy_result=json.dumps(policy_result),
+            ai_analysis=ai_analysis,
+            execution_time_seconds=(time.time() - start_time)
         )
 
-        crew = Crew(
-            agents=[escalation_agent, communicator_agent],
-            tasks=[escalation_task, notification_task],
-            verbose=True,
-            telemetry=True
-        )
-
-        logger.info(f"Kicking off optimized AI crew for escalation and notification of incident {incident_number}")
-        logger.info(f"Crew using {len(escalation_agent.tools)} escalation tools and {len(communicator_agent.tools)} communication tools")
-        
-        with openlit.start_trace(name=f"Escalation_Pipeline_{incident_number}") as trace:
-            result = await crew.kickoff_async()
-            trace.set_metadata({
-                "incident_number": incident_number,
-                "agents": ["escalation_checker", "communicator"],
-                "total_tools": len(escalation_agent.tools) + len(communicator_agent.tools),
-                "optimization": "streamlined_tools"
-            })
-
-        comm_response = str(result.raw or "")
-        logger.info(f"Optimized crew execution completed with result: {comm_response}")
-
-        escalation_keywords = ["yes", "escalate", "send", "notify", "proceed", "approved", "urgent", "critical"]
-        found_keywords = [kw for kw in escalation_keywords if kw in comm_response.lower()]
-        logger.info(f"Keywords found: {found_keywords}")
-
-        should_send_email = len(found_keywords) > 0
-
-        if should_send_email or eligible:
+        if decision_result.get('escalate'):
             try:
-                final_reason = comm_response if should_send_email else reason
-                send_notification(alert, final_reason)
+                # Generate notification content using the communicator agent
+                notification_task = Task(
+                    description=f"Craft a detailed and professional escalation notification. The reason for escalation is: {decision_result.get('reason')}",
+                    expected_output="A JSON object with 'subject' and 'body' for the email.",
+                    agent=communicator_agent,
+                    output_json=True
+                )
+                
+                notification_crew = Crew(agents=[communicator_agent], tasks=[notification_task], verbose=True)
+                notification_result = await notification_crew.kickoff_async()
+                notification_content = json.loads(notification_result.raw)
+
+                send_notification(alert, notification_content['subject'], notification_content['body'])
                 logger.info(f"Email sent to BAU for incident {incident_number}")
                 cache_set_remove(ESCALATION_SET_NAME, incident_number)
                 
-                # Record escalation in escalation_log.json
                 escalation_entry = {
                     "incident_number": incident_number,
                     "title": alert["title"],
                     "severity": alert["severity"],
                     "timestamp": alert["timestamp"],
                     "escalated": True,
-                    "reason": final_reason,
+                    "reason": decision_result.get('reason'),
                     "escalation_time": datetime.now(timezone.utc).isoformat(),
-                    "escalation_type": "ai_decision" if should_send_email else "policy_check",
-                    "tools_used": len(escalation_agent.tools) + len(communicator_agent.tools)
+                    "escalation_type": f"ai_decision_tier_{decision_result.get('tier')}"
                 }
-                from msteamdev.tools.alert_store import save_escalation_log_sync
                 save_escalation_log_sync(escalation_entry)
                 
                 duration = time.time() - start_time
@@ -901,50 +852,22 @@ ENHANCED DECISION CRITERIA:
             except Exception as email_error:
                 logger.error(f"Failed to send email for incident {incident_number}: {email_error}")
                 cache_set_remove(ESCALATION_SET_NAME, incident_number)
-                
-                duration = time.time() - start_time
-                performance_monitor.record_processing(incident_number, duration, "failed", "email_send_failure")
                 performance_monitor.record_error_pattern("Email_Send_Failure", incident_number)
-                
                 return {"status": "error", "message": f"Failed to send email: {str(email_error)}"}
         else:
-            logger.info(f"Escalation not approved for incident {incident_number} by AI and policy check failed")
+            logger.info(f"Escalation not approved for incident {incident_number} by tiered decision framework.")
             cache_set_remove(ESCALATION_SET_NAME, incident_number)
             
             duration = time.time() - start_time
             performance_monitor.record_processing(incident_number, duration, "suppressed", "escalation_pipeline")
             
-            return {"status": "suppressed", "message": "Escalation not approved, no email sent"}
+            return {"status": "suppressed", "message": "Escalation not approved"}
 
     except Exception as e:
-        logger.error(f"Optimized crew execution failed for incident {incident_number}: {e}")
-        if eligible:
-            logger.info(f"Crew failed but policy indicates escalation needed for incident {incident_number}")
-            try:
-                send_notification(alert, f"Crew execution failed but policy indicates escalation: {reason}")
-                logger.info(f"Fallback email sent for incident {incident_number}")
-                cache_set_remove(ESCALATION_SET_NAME, incident_number)
-                
-                duration = time.time() - start_time
-                performance_monitor.record_processing(incident_number, duration, "fallback_escalated", "escalation_pipeline")
-                
-                return {"status": "escalated", "message": "Fallback email sent successfully"}
-            except Exception as fallback_error:
-                logger.error(f"Fallback email failed for incident {incident_number}: {fallback_error}")
-                cache_set_remove(ESCALATION_SET_NAME, incident_number)
-                
-                duration = time.time() - start_time
-                performance_monitor.record_processing(incident_number, duration, "failed", "complete_failure")
-                performance_monitor.record_error_pattern("Complete_Pipeline_Failure", incident_number)
-                
-                return {"status": "error", "message": f"Fallback email failed: {str(fallback_error)}"}
+        logger.error(f"Tiered decision pipeline failed for incident {incident_number}: {e}")
         cache_set_remove(ESCALATION_SET_NAME, incident_number)
-        
-        duration = time.time() - start_time
-        performance_monitor.record_processing(incident_number, duration, "failed", "pipeline_failure")
         performance_monitor.record_error_pattern("Pipeline_Execution_Failure", incident_number)
-        
-        return {"status": "error", "message": f"Crew execution failed: {str(e)}"}
+        return {"status": "error", "message": f"Tiered decision pipeline failed: {str(e)}"}
 
 # OPTIMIZED CORE PIPELINE - streamlined with minimal tools
 

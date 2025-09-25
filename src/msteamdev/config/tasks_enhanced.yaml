@@ -26,30 +26,27 @@ recommend_actions:
 
 evaluate_escalation:
   description: >
-    Evaluate whether the alert should be escalated to the BAU team based on severity, timing, suppression rules,
-    and business impact. Use the available tools to check alert history and escalation patterns.
-    
-    Alert Context:
+    Analyze the provided alert and knowledge base context to provide a detailed escalation analysis.
+    Your goal is to provide a rich analysis that will be used by a decision-making framework.
+
+    **Alert Context:**
     - Title: {title}
     - Severity: {severity}
-    - Incident: {incident_number} 
+    - Incident: {incident_number}
     - Timestamp: {timestamp}
     - Metric: {metric}
-    
-    Decision Criteria:
-    1. Check suppression windows (3 days for critical/high/medium/low, 5 days for warning)
-    2. Verify if similar alerts are already being handled
-    3. Assess business hours vs after-hours impact
-    4. Consider alert frequency and pattern changes
-    5. Review recent escalation history for similar issues
-    
-    Use the ReadAlertLog, ReadEscalationLog, and GetMatchingAlerts tools to investigate further if needed.
-    Your decision must be data-driven and clearly justified.
+
+    **Your Task:**
+
+    1.  **Summarize the situation:** Briefly describe the alert and the key findings from the "KNOWLEDGE BASE INSIGHTS" provided in the context.
+    2.  **Assess the data:** Comment on the freshness of the knowledge base data (using the "last updated" information).
+    3.  **Provide a recommendation:** Based on your analysis, recommend a course of action. Your recommendation should be one of: "escalate", "suppress", or "investigate_further".
+    4.  **Justify your recommendation:** Provide a clear and concise justification for your recommendation, referencing specific details from the knowledge base.
+
+    Your entire response should be a single, coherent block of text that will be used as input for a final decision-making framework.
   expected_output: >
-    Respond with either "Yes, escalate" or "No, suppress" and include a detailed explanation
-    of the decision based on the alert analysis and historical data.
+    A detailed analysis of the alert, including a summary of the situation, an assessment of the knowledge base data, a clear recommendation ("escalate", "suppress", or "investigate_further"), and a justification for the recommendation.
   agent: escalation_checker
-output_pydantic: src.msteamdev.models.EscalationDecision
 
 notify_bau:
   description: >
