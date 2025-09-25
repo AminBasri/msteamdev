@@ -25,12 +25,14 @@ class ServiceTier(Enum):
     STAGING = "staging"
     DEVELOPMENT = "development"
 
-class AlertUrgency(Enum):
+from enum import IntEnum
+
+class AlertUrgency(IntEnum):
     """Alert urgency levels"""
-    IMMEDIATE = "immediate"    # 0-1 hours
-    URGENT = "urgent"         # 1-4 hours
-    NORMAL = "normal"         # 4-24 hours  
-    LOW = "low"              # 24+ hours
+    IMMEDIATE = 4    # 0-1 hours
+    URGENT = 3         # 1-4 hours
+    NORMAL = 2         # 4-24 hours  
+    LOW = 1              # 24+ hours
 
 @dataclass
 class EscalationContext:

@@ -21,6 +21,15 @@ async def _load_log():
     except FileNotFoundError:
         return []
 
+def load_log_sync():
+    """Load alerts from alert_log.json synchronously."""
+    logging.info("Loading alert log from file: %s", LOG_FILE)
+    try:
+        with open(LOG_FILE, "r") as f:
+            return [json.loads(line) for line in f if line.strip()]
+    except FileNotFoundError:
+        return []
+
 def load_escalation_log_sync():
     """Load escalation events from escalation_log.json synchronously."""
     logging.info("Loading escalation log from file: %s", ESCALATION_LOG_FILE)

@@ -5,6 +5,7 @@ import yaml
 from threading import Thread
 from datetime import datetime, timedelta, timezone, time
 from functools import wraps
+from dataclasses import asdict
 import time
 import logging
 import asyncio
@@ -797,20 +798,19 @@ KNOWLEDGE BASE INSIGHTS:
         ai_analysis_result = await crew.kickoff_async()
         ai_analysis = str(ai_analysis_result.raw or "")
 
-        # Get policy result from the intelligent policy
         policy_result_str = intelligent_escalation_policy.run(json.dumps(alert))
-        policy_result = json.loads(policy_result_str)
+        policy_result_dict = json.loads(policy_result_str)
+        policy_result_tuple = (policy_result_dict.get("eligible", False), policy_result_dict.get("reason", ""))
 
         # Make decision using the Tiered Decision Framework
-        decision_result_str = tiered_framework.make_decision(alert, policy_result, None, ai_analysis)
-        decision_result = json.loads(decision_result_str)
+        decision_result = tiered_framework.make_decision(alert, policy_result_tuple, None, ai_analysis)
 
         # Log the decision
         log_decision_audit.run(
             incident_number=incident_number,
-            decision_result=json.dumps(decision_result),
+            decision_result=json.dumps(asdict(decision_result)),
             alert_data=json.dumps(alert),
-            policy_result=json.dumps(policy_result),
+            policy_result=json.dumps(policy_result_dict),
             ai_analysis=ai_analysis,
             execution_time_seconds=(time.time() - start_time)
         )
