@@ -833,11 +833,10 @@ KNOWLEDGE BASE INSIGHTS:
                     description=f"Craft a detailed and professional escalation notification for the following alert:\n\n"
                                 f"Alert: {json.dumps(alert)}\n\n"
                                 f"The reason for escalation is: {decision_result.reason}\n\n"
-                                f"The body should end with the following sign-off:\n"
+                                f"The body should end with the following sign-off, ensuring all newlines within the 'body' field are represented as '\n' for valid JSON formatting:\n"
                                 f"Best regards,\n"
-                                f"CrewAI Alerting System\n"
-                                f"Managed Service Team\n"
-                                f"ensuring newlines are properly formatted for signature.",
+                                f"CrewAI Alerting System,\n"
+                                f"Managed Service Team\n",
                     expected_output="A JSON object with 'subject' and 'body' for the email.",
                     agent=communicator_agent,
                     output_pydantic=models.EmailContent
