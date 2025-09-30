@@ -19,6 +19,7 @@ from crewai.agent import Agent as BaseAgent
 from crewai.task import Task as BaseTask
 from msteamdev.llm import get_llm
 from msteamdev.tools.alert_store import _load_log, save_escalation_log_sync
+from msteamdev import models
 
 # Enhance Agent and Task classes with logging
 class LoggedAgent(BaseAgent):
@@ -822,12 +823,21 @@ KNOWLEDGE BASE INSIGHTS:
 
         if decision_result.escalate:
             try:
+                # Create and initialize the communicator agent
+                communicator_agent = Agent(
+                    role="Technical Communication Specialist",
+                    goal="Craft clear, professional, and actionable alert notifications",
+                    backstory="You excel at technical writing and understand how to communicate complex system issues effectively",
+                    allow_delegation=False,
+                    verbose=True
+                )
+                
                 # Generate notification content using the communicator agent
                 notification_task = Task(
                     description=f"Craft a detailed and professional escalation notification. The reason for escalation is: {decision_result.reason}",
                     expected_output="A JSON object with 'subject' and 'body' for the email.",
                     agent=communicator_agent,
-                    output_json=True
+                    output_pydantic=models.EmailContent
                 )
                 
                 notification_crew = Crew(agents=[communicator_agent], tasks=[notification_task], verbose=True)
