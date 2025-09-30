@@ -821,11 +821,11 @@ KNOWLEDGE BASE INSIGHTS:
             execution_time_seconds=(time.time() - start_time)
         )
 
-        if decision_result.get('escalate'):
+        if decision_result.escalate:
             try:
                 # Generate notification content using the communicator agent
                 notification_task = Task(
-                    description=f"Craft a detailed and professional escalation notification. The reason for escalation is: {decision_result.get('reason')}",
+                    description=f"Craft a detailed and professional escalation notification. The reason for escalation is: {decision_result.reason}",
                     expected_output="A JSON object with 'subject' and 'body' for the email.",
                     agent=communicator_agent,
                     output_json=True
@@ -845,9 +845,9 @@ KNOWLEDGE BASE INSIGHTS:
                     "severity": alert["severity"],
                     "timestamp": alert["timestamp"],
                     "escalated": True,
-                    "reason": decision_result.get('reason'),
+                    "reason": decision_result.reason,
                     "escalation_time": datetime.now(timezone.utc).isoformat(),
-                    "escalation_type": f"ai_decision_tier_{decision_result.get('tier')}"
+                    "escalation_type": f"ai_decision_tier_{decision_result.tier.value}"
                 }
                 save_escalation_log_sync(escalation_entry)
                 
