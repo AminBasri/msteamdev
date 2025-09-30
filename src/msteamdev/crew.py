@@ -832,7 +832,12 @@ KNOWLEDGE BASE INSIGHTS:
                 notification_task = Task(
                     description=f"Craft a detailed and professional escalation notification for the following alert:\n\n"
                                 f"Alert: {json.dumps(alert)}\n\n"
-                                f"The reason for escalation is: {decision_result.reason}",
+                                f"The reason for escalation is: {decision_result.reason}\n\n"
+                                f"The body should end with the following sign-off:\n"
+                                f"Best regards,\n"
+                                f"CrewAI Alerting System\n"
+                                f"Managed Service Team\n"
+                                f"ensuring newlines are properly formatted for signature.",
                     expected_output="A JSON object with 'subject' and 'body' for the email.",
                     agent=communicator_agent,
                     output_pydantic=models.EmailContent
@@ -840,7 +845,26 @@ KNOWLEDGE BASE INSIGHTS:
                 
                 notification_crew = Crew(agents=[communicator_agent], tasks=[notification_task], verbose=True)
                 notification_result = await notification_crew.kickoff_async()
-                notification_content = json.loads(notification_result.raw)
+                
+                raw_output = str(notification_result.raw or "")
+                notification_content = None
+                try:
+                    # The output can sometimes contain ```json ... ``` blocks
+                    json_match = re.search(r'\{.*\}', raw_output, re.DOTALL)
+                    if json_match:
+                        json_str = json_match.group(0)
+                        notification_content = json.loads(json_str, strict=False)
+                    else:
+                        # Try to parse the whole string if no JSON block is found
+                        notification_content = json.loads(raw_output, strict=False)
+                except json.JSONDecodeError as e:
+                    logger.error(f"Failed to parse notification JSON from LLM: {e}")
+                    logger.error(f"Raw output was: {raw_output}")
+                    # Re-raise or handle error so the process doesn't continue with bad data
+                    raise ValueError(f"Could not decode JSON for notification: {raw_output}") from e
+
+                if not notification_content or 'subject' not in notification_content or 'body' not in notification_content:
+                    raise ValueError(f"Invalid notification content structure: {notification_content}")
 
                 send_notification(alert, notification_content['subject'], notification_content['body'])
                 logger.info(f"Email sent to BAU for incident {incident_number}")
