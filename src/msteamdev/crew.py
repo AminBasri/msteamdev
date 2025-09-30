@@ -793,7 +793,6 @@ KNOWLEDGE BASE INSIGHTS:
             logger.warning(f"Could not load knowledge base insights: {kb_error}")
             knowledge_context = "\nKNOWLEDGE BASE: Not available\n"
 
-        # Create a task for the AI to provide an analysis
         ai_analysis_task = Task(
             description=f"Analyze the following alert and provide an escalation recommendation based on the provided knowledge base context.\n\nAlert: {json.dumps(alert)}\n\n{knowledge_context}",
             expected_output="A detailed analysis and recommendation on whether to escalate or suppress the alert.",
