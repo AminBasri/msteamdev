@@ -377,7 +377,6 @@ def get_tools_for_agent(agent_type: str) -> list:
         "escalation_checker": [
             read_alerts_unified,        # Replaces 3+ alert reading tools
             query_knowledge_base,       # Replaces 5+ knowledge tools
-            get_system_health_tool,     # System context
         ],
         
         "reporter": [
@@ -387,7 +386,6 @@ def get_tools_for_agent(agent_type: str) -> list:
         ],
         
         "communicator": [
-            get_system_health_tool,     # Context for notifications
         ]
     }
     
@@ -797,7 +795,8 @@ KNOWLEDGE BASE INSIGHTS:
         ai_analysis_task = Task(
             description=f"Analyze the following alert and provide an escalation recommendation based on the provided knowledge base context.\n\nAlert: {json.dumps(alert)}\n\n{knowledge_context}",
             expected_output="A detailed analysis and recommendation on whether to escalate or suppress the alert.",
-            agent=escalation_agent
+            agent=escalation_agent,
+            tools=[query_knowledge_base]
         )
 
         crew = Crew(agents=[escalation_agent], tasks=[ai_analysis_task], verbose=True)
@@ -823,18 +822,17 @@ KNOWLEDGE BASE INSIGHTS:
 
         if decision_result.escalate:
             try:
-                # Create and initialize the communicator agent
-                communicator_agent = Agent(
-                    role="Technical Communication Specialist",
-                    goal="Craft clear, professional, and actionable alert notifications",
-                    backstory="You excel at technical writing and understand how to communicate complex system issues effectively",
-                    allow_delegation=False,
-                    verbose=True
-                )
+                # Get the communicator agent from the loaded agents
+                communicator_agent = agents.get("communicator")
+                if not communicator_agent:
+                    logger.error("Communicator agent not found")
+                    return {"status": "error", "message": "Communicator agent not found"}
                 
                 # Generate notification content using the communicator agent
                 notification_task = Task(
-                    description=f"Craft a detailed and professional escalation notification. The reason for escalation is: {decision_result.reason}",
+                    description=f"Craft a detailed and professional escalation notification for the following alert:\n\n"
+                                f"Alert: {json.dumps(alert)}\n\n"
+                                f"The reason for escalation is: {decision_result.reason}",
                     expected_output="A JSON object with 'subject' and 'body' for the email.",
                     agent=communicator_agent,
                     output_pydantic=models.EmailContent

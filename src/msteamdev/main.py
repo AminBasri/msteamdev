@@ -11,7 +11,7 @@ from msteamdev.crew import start_alert_pipeline
 warnings.filterwarnings("ignore", category=SyntaxWarning, module="pydantic_core")
 warnings.filterwarnings("ignore", category=UserWarning, module="crewai.task")
 
-def run_test_pipeline():
+def run():
     """Runs a test alert through the pipeline."""
     print("--- Running a test alert through the pipeline ---")
     test_alert = {
@@ -45,7 +45,7 @@ def main():
     args = parser.parse_args()
 
     if args.command in ["run", "test"]:
-        run_test_pipeline()
+        run()
     else:
         parser.print_help()
         sys.exit(1)
