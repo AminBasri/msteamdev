@@ -118,3 +118,127 @@ The system now relies on a more robust and intelligent set of information source
 *   **Intelligent Policy Engine:** The new rule-based system that provides a dynamic, context-aware recommendation.
 *   **AI Analysis:** The `escalation_checker` agent's analysis, which provides a qualitative assessment based on KB data.
 *   **PagerDuty API:** Used to check the current incident status.
+
+---
+
+## **6. AI Confidence Scoring & Tiered Framework Examples**
+
+To understand the framework's logic, let's walk through an example for each tier.
+
+### **Example 1: Tier 2 (KB-Enhanced Suppression)**
+
+This example shows the AI confidently suppressing a "noisy" alert based on rich historical data.
+
+#### **The Input: A "Noisy" Alert Arrives**
+
+At 3 AM, a new alert comes in from a non-production server.
+
+*   **Incident:** #98765
+*   **Title:** `ALARM: [WARNING] [STAGING] Synergi CORE - High CPU Utilization on web-s-04`
+*   **Severity:** `warning`
+*   **Timestamp:** `2025-10-03T03:00:00Z` (After-hours)
+
+#### **Processing Step 1: Tier 1 (Safety Net)**
+
+The alert is a `warning` and has no critical keywords, so it passes the safety checks. The framework proceeds to Tier 2.
+
+#### **Processing Step 2: Tier 2 (KB-Enhanced Decision)**
+
+The system queries the Knowledge Base and finds:
+*   **Data Freshness:** Last updated **25 days ago**.
+*   **Data Volume:** **15 similar incidents** found.
+*   **Pattern Analysis:** **12 of the 15 (80%)** were false positives caused by a nightly backup job.
+
+This data is used to calculate a **KB Confidence Score of 96%**. Because the score is high (≥80%) and the data shows a clear false positive pattern, the system decides to suppress.
+
+#### **The Output: Confident Suppression**
+
+The framework stops at Tier 2 and generates its final decision.
+
+```json
+{
+  "escalate": false,
+  "tier": "kb_enhanced",
+  "confidence": "high",
+  "reason": "KB SUPPRESSION: High confidence (0.96) suppression with 80.0% false positive rate"
+}
+```
+**Conclusion:** The alert is autonomously suppressed, preventing unnecessary noise.
+
+---
+
+### **Example 2: Tier 1 (Safety Net Escalation)**
+
+This example shows a critical, service-impacting alert that is immediately escalated without any AI analysis.
+
+#### **The Input: A Critical Outage**
+
+*   **Incident:** #11223
+*   **Title:** `ALARM: [CRITICAL] Production Payment Gateway is DOWN`
+*   **Severity:** `critical`
+*   **Timestamp:** `2025-10-03T11:00:00Z` (Business hours)
+
+#### **Processing Step 1: Tier 1 (Safety Net)**
+
+The framework begins its checks:
+1.  **Severity Check:** The alert's severity is `critical`. This is a non-negotiable trigger.
+
+**The decision is made instantly.** The framework stops all further processing. Tiers 2 and 3 are never evaluated because safety comes first.
+
+#### **The Output: Immediate Escalation**
+
+```json
+{
+  "escalate": true,
+  "tier": "safety_net",
+  "confidence": "high",
+  "reason": "SAFETY NET: CRITICAL severity requires immediate escalation",
+  "safety_override": true
+}
+```
+**Conclusion:** The alert is escalated immediately, ensuring the on-call team is notified within seconds of a critical issue.
+
+---
+
+### **Example 3: Tier 3 (Policy Fallback Escalation)**
+
+This example shows a new, unknown alert that the AI cannot confidently assess, forcing a fallback to the intelligent policy rules.
+
+#### **The Input: A New, Unknown Anomaly**
+
+*   **Incident:** #44556
+*   **Title:** `ALARM: [WARNING] [PROD] New User Signup Service - Latency Anomaly Detected`
+*   **Severity:** `warning`
+*   **Timestamp:** `2025-10-03T14:00:00Z` (Business hours)
+
+#### **Processing Step 1: Tier 1 (Safety Net)**
+
+The alert is a `warning` with no critical keywords, so it passes the safety checks.
+
+#### **Processing Step 2: Tier 2 (KB-Enhanced Decision)**
+
+The system queries the Knowledge Base for "Latency Anomaly" on the "New User Signup Service."
+*   **Data Volume:** It finds **0 similar incidents**.
+
+Because there is no historical data, the **KB Confidence Score is extremely low (e.g., 15%)**. This is far below the 80% threshold required to make an autonomous decision. The framework proceeds to Tier 3.
+
+#### **Processing Step 3: Tier 3 (Intelligent Policy Engine)**
+
+The decision now rests on the policy engine, which analyzes the alert's content:
+*   **Business Impact:** "Latency" on a "User Signup Service" is assessed as **High**, as it could prevent new customers from joining.
+*   **Service Tier:** The `[PROD]` tag indicates a **Production** environment.
+*   **Time Context:** The alert occurred during **business hours**.
+
+The engine's rules state that a **High** impact alert on a **Production** service during **business hours** must be investigated. It therefore approves the escalation.
+
+#### **The Output: Safe Escalation by Policy**
+
+```json
+{
+  "escalate": true,
+  "tier": "policy_fallback",
+  "confidence": "medium",
+  "reason": "POLICY ESCALATION: Policy criteria met for escalation"
+}
+```
+**Conclusion:** Even though the AI was uncertain, the system remained safe by falling back to its intelligent rules, ensuring a potentially customer-affecting issue was not ignored.
