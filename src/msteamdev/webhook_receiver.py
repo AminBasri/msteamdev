@@ -590,17 +590,23 @@ async def receive_alert(request: Request):
                 # OTOBO INTEGRATION: Create ticket for escalated alert
                 # Note: This is a simplified approach. A better way would be to call this *after* the crew decides to escalate.
                 # For this example, we create the ticket immediately.
-                try:
-                    create_payload = {"title": alert["title"], "body": json.dumps(alert, indent=2)}
-                    response = requests.post(f"{OTOBO_SERVER_URL}/create_ticket", json=create_payload, timeout=10)
-                    response.raise_for_status()
-                    ticket_data = response.json().get("ticket_data", {})
-                    if ticket_data and "TicketID" in ticket_data:
-                        ticket_id = ticket_data["TicketID"]
-                        cache_set(f"otobo_ticket:{incident_number}", ticket_id, ttl_seconds=86400) # Cache for 24 hours
-                        webhook_logger.info(f"Created Otobo ticket {ticket_id} for incident {incident_number}")
-                except Exception as e:
-                    webhook_logger.error(f"Failed to create Otobo ticket for incident {incident_number}: {e}")
+                
+                # DUPLICATE PREVENTION: Check if a ticket already exists for this incident
+                existing_ticket_id = cache_get(f"otobo_ticket:{incident_number}")
+                if existing_ticket_id:
+                    webhook_logger.info(f"Duplicate alert received. Otobo ticket {existing_ticket_id} already exists for incident {incident_number}. Skipping creation.")
+                else:
+                    try:
+                        create_payload = {"title": alert["title"], "body": json.dumps(alert, indent=2)}
+                        response = requests.post(f"{OTOBO_SERVER_URL}/create_ticket", json=create_payload, timeout=10)
+                        response.raise_for_status()
+                        ticket_data = response.json().get("ticket_data", {})
+                        if ticket_data and "TicketID" in ticket_data:
+                            ticket_id = ticket_data["TicketID"]
+                            cache_set(f"otobo_ticket:{incident_number}", ticket_id, ttl_seconds=86400) # Cache for 24 hours
+                            webhook_logger.info(f"Created Otobo ticket {ticket_id} for incident {incident_number}")
+                    except Exception as e:
+                        webhook_logger.error(f"Failed to create Otobo ticket for incident {incident_number}: {e}")
 
                 result = start_alert_pipeline(alert)
                 return JSONResponse(content={"status": "received", "result": result})

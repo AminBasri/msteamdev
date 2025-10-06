@@ -886,10 +886,49 @@ KNOWLEDGE BASE INSIGHTS:
                 
                 return {"status": "escalated", "message": "Email sent to BAU successfully"}
             except Exception as email_error:
-                logger.error(f"Failed to send email for incident {incident_number}: {email_error}")
-                cache_set_remove(ESCALATION_SET_NAME, incident_number)
-                performance_monitor.record_error_pattern("Email_Send_Failure", incident_number)
-                return {"status": "error", "message": f"Failed to send email: {str(email_error)}"}
+                logger.error(f"Failed to generate or send AI notification for incident {incident_number}: {email_error}")
+                logger.warning(f"LLM-generated notification failed for incident {incident_number}. Sending fallback notification.")
+                try:
+                    fallback_subject = f"[FALLBACK] Escalation for Incident #{incident_number}: {alert.get('title', 'No Title')}"
+                    fallback_body = (
+                        f"This is a fallback notification because the AI-generated content failed.\n\n"
+                        f"Alert Details:\n"
+                        f"  - Incident Number: {incident_number}\n"
+                        f"  - Title: {alert.get('title')}\n"
+                        f"  - Severity: {alert.get('severity')}\n"
+                        f"  - Timestamp: {alert.get('timestamp')}\n\n"
+                        f"Reason for Escalation: {decision_result.reason}\n\n"
+                        f"Please investigate this alert.\n\n"
+                        f"Best regards,\n"
+                        f"CrewAI Alerting System (Fallback)"
+                    )
+                    send_notification(alert, fallback_subject, fallback_body)
+                    logger.info(f"Fallback email sent successfully to BAU for incident {incident_number}")
+                    
+                    cache_set_remove(ESCALATION_SET_NAME, incident_number)
+                    
+                    escalation_entry = {
+                        "incident_number": incident_number,
+                        "title": alert["title"],
+                        "severity": alert["severity"],
+                        "timestamp": alert["timestamp"],
+                        "escalated": True,
+                        "reason": f"Fallback - {decision_result.reason}",
+                        "escalation_time": datetime.now(timezone.utc).isoformat(),
+                        "escalation_type": f"ai_decision_tier_{decision_result.tier.value}_fallback"
+                    }
+                    save_escalation_log_sync(escalation_entry)
+                    
+                    duration = time.time() - start_time
+                    performance_monitor.record_processing(incident_number, duration, "escalated_fallback", "escalation_pipeline")
+                    
+                    return {"status": "escalated_fallback", "message": "Fallback email sent to BAU successfully"}
+
+                except Exception as fallback_error:
+                    logger.error(f"Failed to send fallback email for incident {incident_number}: {fallback_error}")
+                    cache_set_remove(ESCALATION_SET_NAME, incident_number)
+                    performance_monitor.record_error_pattern("Fallback_Email_Send_Failure", incident_number)
+                    return {"status": "error", "message": f"Failed to send email and fallback: {str(fallback_error)}"}
         else:
             logger.info(f"Escalation not approved for incident {incident_number} by tiered decision framework.")
             cache_set_remove(ESCALATION_SET_NAME, incident_number)
