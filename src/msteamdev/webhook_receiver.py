@@ -3,6 +3,7 @@
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
 from msteamdev.crew import start_alert_pipeline, get_user_email_from_pagerduty
+from msteamdev.tools.redis_client import cache_get, cache_set
 import json
 import os
 import re
@@ -15,6 +16,9 @@ from pathlib import Path
 # FastAPI application for receiving PagerDuty webhooks
 app = FastAPI(title="PagerDuty Webhook Receiver")
 LOG_PATH = "src/msteamdev/alert_log.json"
+
+# Otobo server URL
+OTOBO_SERVER_URL = "http://localhost:7007"
 
 # Configuration flags for filtering
 FILTER_ENABLED = True
@@ -463,6 +467,17 @@ async def receive_alert(request: Request):
             incident_number = str(incident_details.get("incident_number", incident_id))
             webhook_logger.info(f"Resolved incident ID {incident_id} to number {incident_number}")
 
+            # OTOBO INTEGRATION: Update Otobo ticket if it exists
+            otobo_ticket_id = cache_get(f"otobo_ticket:{incident_number}")
+            if otobo_ticket_id:
+                try:
+                    update_payload = {"ticket_id": str(otobo_ticket_id), "body": f"PagerDuty Note Added:\n\n{note_content}"}
+                    response = requests.post(f"{OTOBO_SERVER_URL}/update_ticket", json=update_payload, timeout=10)
+                    response.raise_for_status()  # Raise an exception for bad status codes
+                    webhook_logger.info(f"Sent update to Otobo for ticket {otobo_ticket_id}")
+                except Exception as e:
+                    webhook_logger.error(f"Failed to send update to Otobo for ticket {otobo_ticket_id}: {e}")
+
             # Parse knowledge from note
             knowledge_updates = parse_knowledge_from_note(note_content)
 
@@ -500,8 +515,8 @@ async def receive_alert(request: Request):
                     "message": "Note processed but no structured knowledge extracted"
                 })
 
-        # Handle triggered incidents (PRESERVE ORIGINAL FUNCTIONALITY)
-        if event_type not in ["incident.annotated"]:  # Only process non-annotation events
+        # Handle triggered and resolved incidents
+        if event_type not in ["incident.annotated"]:
             
             if not data:
                 raise ValueError("Missing 'data' in event")
@@ -511,6 +526,19 @@ async def receive_alert(request: Request):
                 raise ValueError("Missing 'title' in data")
 
             status = data.get("status", "unknown").lower()
+            incident_number = str(data.get("incident_number") or data.get("number") or data.get("id", "unknown"))
+
+            # OTOBO INTEGRATION: Handle resolved status
+            if status == "resolved":
+                otobo_ticket_id = cache_get(f"otobo_ticket:{incident_number}")
+                if otobo_ticket_id:
+                    try:
+                        resolve_payload = {"ticket_id": str(otobo_ticket_id), "body": "Incident resolved in PagerDuty."}
+                        requests.post(f"{OTOBO_SERVER_URL}/resolve_ticket", json=resolve_payload, timeout=10)
+                        webhook_logger.info(f"Sent resolve request to Otobo for ticket {otobo_ticket_id}")
+                    except Exception as e:
+                        webhook_logger.error(f"Failed to send resolve request to Otobo for ticket {otobo_ticket_id}: {e}")
+                # Continue processing for logging purposes
             
             # Get timestamp from appropriate field
             occurred_at = data.get("created_at") or data.get("occurred_at") or payload.get("event", {}).get("occurred_at", "unknown")
@@ -525,7 +553,7 @@ async def receive_alert(request: Request):
                     status_code=200
                 )
 
-            # Extract from_email, prioritizing assignee's email if available (ORIGINAL LOGIC)
+            # Extract from_email
             from_email = data.get("from_email")
             if not from_email and data.get("assignees"):
                 first_assignee = data["assignees"][0]
@@ -534,24 +562,17 @@ async def receive_alert(request: Request):
                     fetched_email = get_user_email_from_pagerduty(assignee_id)
                     if fetched_email:
                         from_email = fetched_email
-                        webhook_logger.info(f"Using assignee's email {from_email} for incident {data.get('number', data.get('incident_number', 'N/A'))}")
-                    else:
-                        from_email = os.getenv("SENDER_EMAIL", "noc@infopro.com.my")
-                        webhook_logger.warning(f"Missing 'from_email' in alert data for incident {data.get('number', data.get('incident_number', 'N/A'))}. Could not fetch assignee email. Using fallback email: {from_email}")
                 else:
                     from_email = os.getenv("SENDER_EMAIL", "noc@infopro.com.my")
-                    webhook_logger.warning(f"Missing 'from_email' in alert data for incident {data.get('number', data.get('incident_number', 'N/A'))}. Assignee found, but no valid assignee ID. Using fallback email: {from_email}")
             elif not from_email:
                 from_email = os.getenv("SENDER_EMAIL", "noc@infopro.com.my")
-                webhook_logger.warning(f"Missing 'from_email' in alert data for incident {data.get('number', data.get('incident_number', 'N/A'))}. No assignees found. Using fallback email: {from_email}")
 
-            # Build alert object (ORIGINAL FORMAT)
             alert = {
                 "severity": extract_severity_from_title(title),
                 "metric": extract_metric_from_title(title),
                 "status": status,
                 "timestamp": occurred_at,
-                "incident_number": data.get("incident_number") or data.get("number") or data.get("id", "unknown"),
+                "incident_number": incident_number,
                 "title": title,
                 "original_metric": title,
                 "from_email": from_email
@@ -559,19 +580,34 @@ async def receive_alert(request: Request):
 
             webhook_logger.info(f"Processed alert: {json.dumps(alert, indent=2)}")
 
-            # Save alert to log (ORIGINAL FUNCTIONALITY)
             with open(LOG_PATH, "a") as f:
                 f.write(json.dumps(alert) + "\n")
 
-            # Store baseline incident information for knowledge tracking
             await store_incident_knowledge(str(alert["incident_number"]), [], alert)
 
-            # Start your existing alert pipeline (ORIGINAL FUNCTIONALITY)
-            result = start_alert_pipeline(alert)
-            return JSONResponse(content={"status": "received", "result": result})
+            # Only start the pipeline for triggered alerts
+            if status == "triggered":
+                # OTOBO INTEGRATION: Create ticket for escalated alert
+                # Note: This is a simplified approach. A better way would be to call this *after* the crew decides to escalate.
+                # For this example, we create the ticket immediately.
+                try:
+                    create_payload = {"title": alert["title"], "body": json.dumps(alert, indent=2)}
+                    response = requests.post(f"{OTOBO_SERVER_URL}/create_ticket", json=create_payload, timeout=10)
+                    response.raise_for_status()
+                    ticket_data = response.json().get("ticket_data", {})
+                    if ticket_data and "TicketID" in ticket_data:
+                        ticket_id = ticket_data["TicketID"]
+                        cache_set(f"otobo_ticket:{incident_number}", ticket_id, ttl_seconds=86400) # Cache for 24 hours
+                        webhook_logger.info(f"Created Otobo ticket {ticket_id} for incident {incident_number}")
+                except Exception as e:
+                    webhook_logger.error(f"Failed to create Otobo ticket for incident {incident_number}: {e}")
+
+                result = start_alert_pipeline(alert)
+                return JSONResponse(content={"status": "received", "result": result})
+            else:
+                return JSONResponse(content={"status": "processed_non_trigger", "incident_number": incident_number})
         
         else:
-            # This shouldn't happen as we handled annotation events above
             webhook_logger.warning(f"Unhandled event type: {event_type}")
             return JSONResponse(content={"status": "ignored", "event_type": event_type})
 

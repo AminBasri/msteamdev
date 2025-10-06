@@ -57,8 +57,8 @@ def validate_rocketchat_webhook() -> tuple[bool, str]:
         return False, "Missing ROCKETCHAT_WEBHOOK_URL or ROCKETCHAT_WEBHOOK_TOKEN environment variables"
     return True, "Rocket.Chat webhook configuration is valid"
 
-def send_rocketchat_webhook_message(message: str) -> bool:
-    """Send a message to Rocket.Chat using the webhook."""
+def send_rocketchat_webhook_message(message: str, alert: Dict = None, subject: str = None) -> bool:
+    """Send a message to Rocket.Chat using the webhook, with a fallback to email."""
     is_valid, config_message = validate_rocketchat_webhook()
     if not is_valid:
         logger.error(f"Rocket.Chat webhook validation failed: {config_message}")
@@ -87,16 +87,52 @@ def send_rocketchat_webhook_message(message: str) -> bool:
             return True
         else:
             logger.error(f"Rocket.Chat webhook failed: HTTP {response.status_code}, Response: {response.text}")
-            return False
-    except Exception as e:
+            raise requests.exceptions.RequestException
+    except requests.exceptions.RequestException as e:
         logger.error(f"Failed to send Rocket.Chat webhook message: {e}")
+        logger.info("Attempting to send email notification as fallback.")
+        if alert and subject:
+            try:
+                is_valid_smtp, smtp_message = validate_smtp_config()
+                if not is_valid_smtp:
+                    logger.error(f"SMTP configuration validation failed: {smtp_message}")
+                    return False
+
+                smtp_host = os.getenv("SMTP_HOST")
+                smtp_port = int(os.getenv("SMTP_PORT", "587"))
+                smtp_user = os.getenv("SMTP_USERNAME")
+                smtp_pass = os.getenv("SMTP_PASSWORD")
+                recipients = [email.strip() for email in os.getenv("ALERT_EMAIL_RECIPIENTS", "").split(",") if email.strip()]
+                sender_name = os.getenv("SENDER_NAME", "CrewAI Escalation Alert System")
+                sender_email = os.getenv("SENDER_EMAIL", smtp_user)
+
+                msg = MIMEMultipart()
+                msg["From"] = formataddr((str(Header(sender_name, 'utf-8')), sender_email))
+                msg["To"] = ", ".join(recipients)
+                msg["Subject"] = subject
+                msg.attach(MIMEText(message, "plain"))
+
+                with smtplib.SMTP(smtp_host, smtp_port) as server:
+                    server.starttls()
+                    server.login(smtp_user, smtp_pass)
+                    server.sendmail(sender_email, recipients, msg.as_string())
+                    logger.info(f"Fallback email notification sent successfully to {len(recipients)} recipients")
+                    return True
+            except (ValueError, smtplib.SMTPException) as smtp_e:
+                logger.error(f"Failed to send fallback email notification: {smtp_e}")
+                return False
         return False
 
-def send_notification(alert: Dict, subject: str, body: str) -> str:
-    """Send email and Rocket.Chat webhook notification for alert escalation."""
+def send_dynamic_notification(alert: Dict, subject: str, body: str) -> str:
+    """Send notifications via email and Rocket.Chat, with fallback logic."""
     incident_number = alert.get('incident_number', 'N/A')
-    logger.info(f"Starting notification for incident #{incident_number}")
-    
+    logger.info(f"Starting dynamic notification for incident #{incident_number}")
+
+    smtp_sent = False
+    rocketchat_sent = False
+    recipients_count = 0
+
+    # Attempt to send email via SMTP
     try:
         is_valid_smtp, smtp_message = validate_smtp_config()
         if not is_valid_smtp:
@@ -108,6 +144,7 @@ def send_notification(alert: Dict, subject: str, body: str) -> str:
         smtp_user = os.getenv("SMTP_USERNAME")
         smtp_pass = os.getenv("SMTP_PASSWORD")
         recipients = [email.strip() for email in os.getenv("ALERT_EMAIL_RECIPIENTS", "").split(",") if email.strip()]
+        recipients_count = len(recipients)
         sender_name = os.getenv("SENDER_NAME", "CrewAI Escalation Alert System")
         sender_email = os.getenv("SENDER_EMAIL", smtp_user)
 
@@ -121,15 +158,31 @@ def send_notification(alert: Dict, subject: str, body: str) -> str:
             server.starttls()
             server.login(smtp_user, smtp_pass)
             server.sendmail(sender_email, recipients, msg.as_string())
-            logger.info(f"Email notification sent successfully to {len(recipients)} recipients")
+            logger.info(f"Email notification sent successfully to {recipients_count} recipients")
+            smtp_sent = True
 
-        # Send Rocket.Chat webhook notification
-        if send_rocketchat_webhook_message(body):
-            logger.info(f"Rocket.Chat webhook notification sent successfully for incident #{incident_number}")
-        else:
-            logger.warning("Rocket.Chat webhook notification failed, but email was sent")
-
-        return f"Notifications sent successfully: email to {len(recipients)} recipients, Rocket.Chat webhook message sent"
     except (ValueError, smtplib.SMTPException) as e:
-        logger.error(f"Failed to send notifications: {e}")
-        raise
+        logger.error(f"Failed to send email notification: {e}")
+
+    # Attempt to send Rocket.Chat message
+    if send_rocketchat_webhook_message(body, alert=alert, subject=subject):
+        rocketchat_sent = True
+        logger.info(f"Rocket.Chat webhook notification sent successfully for incident #{incident_number}")
+    else:
+        logger.error("Rocket.Chat webhook notification failed.")
+
+    # Final status report
+    if smtp_sent and rocketchat_sent:
+        return f"Notifications sent successfully: email to {recipients_count} recipients, Rocket.Chat webhook message sent"
+    elif smtp_sent:
+        return f"Notification sent successfully via email to {recipients_count} recipients. Rocket.Chat failed."
+    elif rocketchat_sent:
+        return "Notification sent successfully via Rocket.Chat. Email failed."
+    else:
+        error_message = "Failed to send notification via both email and Rocket.Chat."
+        logger.critical(error_message)
+        raise Exception(error_message)
+
+def send_notification(alert: Dict, subject: str, body: str) -> str:
+    """Send email and Rocket.Chat webhook notification for alert escalation."""
+    return send_dynamic_notification(alert, subject, body)
