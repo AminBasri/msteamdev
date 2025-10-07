@@ -4,7 +4,7 @@ import json
 from msteamdev.crew import run_escalation_pipeline
 
 # Load the alert from the log file
-with open("alert_log.json", "r") as f:
+with open("src/msteamdev/alert_log.json", "r") as f:
     for line in f:
         alert = json.loads(line)
         if alert.get("incident_number") == 346:
