@@ -282,7 +282,7 @@ class TieredDecisionFramework:
         
         # Check if KB analysis meets high-confidence criteria
         meets_criteria = (
-            kb_confidence >= 0.8 and
+            kb_confidence >= 0.7 and
             knowledge_metrics.data_age_days and knowledge_metrics.data_age_days <= 90 and
             knowledge_metrics.incident_count >= 2
         )
