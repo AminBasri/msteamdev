@@ -370,25 +370,23 @@ class TieredDecisionFramework:
             "policy_reason": policy_reason[:200] + "..." if len(policy_reason) > 200 else policy_reason
         }
         
-        # Check for explicit policy suppression (recent escalation)
-        if "🚫 Alert suppressed" in policy_reason and "Recent escalation" in policy_reason:
-            audit_entry["decision"] = "policy_suppressed_recent_escalation"
+        if not policy_eligible:
+            audit_entry["decision"] = "policy_suppressed"
             audit_trail.append(audit_entry)
             
             return DecisionResult(
                 escalate=False,
                 tier=DecisionTier.TIER_3_POLICY,
                 confidence=ConfidenceLevel.MEDIUM,
-                reason="POLICY SUPPRESSION: Recent escalation within threshold period",
+                reason=f"POLICY SUPPRESSION: {policy_reason}",
                 details={
                     "policy_reason": policy_reason,
-                    "suppression_type": "recent_escalation_cooldown"
+                    "suppression_type": "policy_rule"
                 },
                 audit_trail=audit_trail
             )
         
-        # Check for policy escalation (time threshold exceeded)
-        elif "🔺 Escalation allowed" in policy_reason:
+        else:
             audit_entry["decision"] = "policy_escalation_allowed"
             audit_trail.append(audit_entry)
             
@@ -396,28 +394,10 @@ class TieredDecisionFramework:
                 escalate=True,
                 tier=DecisionTier.TIER_3_POLICY,
                 confidence=ConfidenceLevel.MEDIUM,
-                reason="POLICY ESCALATION: Policy criteria met for escalation",
+                reason=f"POLICY ESCALATION: {policy_reason}",
                 details={
                     "policy_reason": policy_reason,
-                    "escalation_type": "policy_threshold_exceeded"
-                },
-                audit_trail=audit_trail
-            )
-        
-        # Default safety escalation when policy is unclear
-        else:
-            audit_entry["decision"] = "default_safety_escalation"
-            audit_trail.append(audit_entry)
-            
-            return DecisionResult(
-                escalate=True,
-                tier=DecisionTier.TIER_3_POLICY,
-                confidence=ConfidenceLevel.LOW,
-                reason="SAFETY ESCALATION: Policy inconclusive, defaulting to safe escalation",
-                details={
-                    "policy_reason": policy_reason,
-                    "escalation_type": "safety_default",
-                    "safety_first": True
+                    "escalation_type": "policy_rule"
                 },
                 audit_trail=audit_trail
             )
