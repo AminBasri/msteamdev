@@ -484,8 +484,11 @@ class IntelligentPolicyEngine:
             cutoff_time = current_time - timedelta(hours=cooldown_hours)
             
             recent_escalations = []
+            current_metric_type = self._extract_metric_type(alert_title)
             for escalation in escalations:
-                if (escalation.get('title') == alert_title and
+                escalation_title = escalation.get('title', '')
+                escalation_metric_type = self._extract_metric_type(escalation_title)
+                if (escalation_metric_type == current_metric_type and
                     escalation.get('escalated', False)):
                     
                     try:
