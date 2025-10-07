@@ -73,7 +73,7 @@ This tier enforces absolute, non-negotiable rules to ensure critical alerts are 
 
 If Tier 1 rules do not trigger, the framework consults the knowledge base (KB). A decision can be made here only if the KB data meets **high-confidence criteria**:
 
-*   **Confidence Score:** ≥ 80%
+*   **Confidence Score:** ≥ 70%
 *   **Data Freshness:** ≤ 90 days old
 *   **Sufficient Volume:** Based on at least 2 historical incidents
 
@@ -90,8 +90,8 @@ If Tier 1 is not triggered and the KB analysis is inconclusive or lacks confiden
     *   **Service Tier:** (Production, Staging, Dev)
     *   **Metric Type:** (CPU, Database, Payment, etc.)
     *   **Time Context:** (Business hours vs. after-hours)
-*   **Dynamic Cooldowns:** The "recent escalation" cooldown period is now dynamic, ranging from 2 hours for critical issues to 48 hours for low-impact ones.
-*   **Safety Default:** If the policy result is still unclear, the system defaults to **escalating the alert** to ensure safety.
+*   **Dynamic Cooldowns:** The "recent escalation" cooldown period is now dynamic, ranging from 2 hours for critical issues to 48 hours for low-impact ones. The suppression rule takes precedence over other rules.
+*   **Boolean-Based Logic:** The Tier 3 framework directly uses the `True` or `False` output from the policy engine, making the logic robust and predictable.
 
 ## **4. AI Agent Roles in the New Framework**
 
@@ -119,11 +119,57 @@ The system now relies on a more robust and intelligent set of information source
 *   **AI Analysis:** The `escalation_checker` agent's analysis, which provides a qualitative assessment based on KB data.
 *   **PagerDuty API:** Used to check the current incident status.
 
+## **6. Testing and Debugging**
+
+A replay script is available to test the escalation pipeline without needing to trigger a live alert from PagerDuty.
+
+*   **Script:** `tests/replay_escalation.py`
+*   **Functionality:** The script automatically reads the `alert_log.json` file, selects the most recent alert, and runs the `run_escalation_pipeline` function for that alert.
+*   **Usage:** `python3 tests/replay_escalation.py`
+*   **Purpose:** This is extremely useful for debugging and for verifying changes to the `intelligent_policy.py` or `tiered_decision.py` logic.
+
 ---
 
-## **6. AI Confidence Scoring & Tiered Framework Examples**
+## **7. AI Confidence Scoring & Tiered Framework Examples**
 
 To understand the framework's logic, let's walk through an example for each tier.
+
+### **How the KB Confidence Score is Calculated**
+
+The KB Confidence Score is a crucial metric that determines whether the system can make a high-confidence decision in Tier 2. It is a weighted average of four key factors, each measuring a different aspect of the knowledge base's quality and relevance to the current alert.
+
+The score is calculated as follows:
+
+**`KB Confidence Score = (Data Reliability * 0.4) + (Data Volume * 0.2) + (Data Freshness * 0.2) + (Pattern Clarity * 0.2)`**
+
+---
+
+#### **1. Data Reliability (40% Weight)**
+
+*   **What it measures:** The overall trustworthiness of the historical data for a given metric type (e.g., "cpu").
+*   **How it's calculated:** This is a sub-score based on:
+    *   **Data Age:** Newer data is considered more reliable.
+    *   **Data Volume:** A higher number of past incidents provides a more reliable sample.
+    *   **Pattern Clarity:** A clear pattern (e.g., a very high or very low false-positive rate) is more reliable than an ambiguous one.
+*   **Source:** The underlying data comes from `incident_knowledge.json` and `alert_patterns.json`.
+
+#### **2. Data Volume (20% Weight)**
+
+*   **What it measures:** The number of similar incidents found in the knowledge base.
+*   **How it's calculated:** The score is higher if more incidents are found (e.g., 10+ incidents = 1.0, 5-9 incidents = 0.8, 2-4 incidents = 0.6).
+*   **Source:** `incident_knowledge.json`.
+
+#### **3. Data Freshness (20% Weight)**
+
+*   **What it measures:** How recently the knowledge base patterns for the alert's metric type were updated.
+*   **How it's calculated:** The score is higher for more recently updated data (e.g., ≤ 30 days = 1.0, ≤ 90 days = 0.8, ≤ 180 days = 0.6).
+*   **Source:** The `last_updated` timestamp in `alert_patterns.json`.
+
+#### **4. Pattern Clarity (20% Weight)**
+
+*   **What it measures:** How clear the historical pattern is for the alert.
+*   **How it's calculated:** The score is higher if there is a very high (e.g., ≥ 70%) or very low false-positive rate, as this indicates a clear and predictable pattern.
+*   **Source:** `alert_patterns.json` and `incident_knowledge.json`.
 
 ### **Example 1: Tier 2 (KB-Enhanced Suppression)**
 
@@ -147,9 +193,9 @@ The alert is a `warning` and has no critical keywords, so it passes the safety c
 The system queries the Knowledge Base and finds:
 *   **Data Freshness:** Last updated **25 days ago**.
 *   **Data Volume:** **15 similar incidents** found.
-*   **Pattern Analysis:** **12 of the 15 (80%)** were false positives caused by a nightly backup job.
+*   **Pattern Analysis:** **11 of the 15 (73%)** were false positives caused by a nightly backup job.
 
-This data is used to calculate a **KB Confidence Score of 96%**. Because the score is high (≥80%) and the data shows a clear false positive pattern, the system decides to suppress.
+This data is used to calculate a **KB Confidence Score of 75%**. Because the score is high (≥70%) and the data shows a clear false positive pattern, the system decides to suppress.
 
 #### **The Output: Confident Suppression**
 
@@ -160,7 +206,7 @@ The framework stops at Tier 2 and generates its final decision.
   "escalate": false,
   "tier": "kb_enhanced",
   "confidence": "high",
-  "reason": "KB SUPPRESSION: High confidence (0.96) suppression with 80.0% false positive rate"
+  "reason": "KB SUPPRESSION: High confidence (0.75) suppression with 73.0% false positive rate"
 }
 ```
 **Conclusion:** The alert is autonomously suppressed, preventing unnecessary noise.
@@ -220,7 +266,7 @@ The alert is a `warning` with no critical keywords, so it passes the safety chec
 The system queries the Knowledge Base for "Latency Anomaly" on the "New User Signup Service."
 *   **Data Volume:** It finds **0 similar incidents**.
 
-Because there is no historical data, the **KB Confidence Score is extremely low (e.g., 15%)**. This is far below the 80% threshold required to make an autonomous decision. The framework proceeds to Tier 3.
+Because there is no historical data, the **KB Confidence Score is extremely low (e.g., 15%)**. This is far below the 70% threshold required to make an autonomous decision. The framework proceeds to Tier 3.
 
 #### **Processing Step 3: Tier 3 (Intelligent Policy Engine)**
 
@@ -229,7 +275,7 @@ The decision now rests on the policy engine, which analyzes the alert's content:
 *   **Service Tier:** The `[PROD]` tag indicates a **Production** environment.
 *   **Time Context:** The alert occurred during **business hours**.
 
-The engine's rules state that a **High** impact alert on a **Production** service during **business hours** must be investigated. It therefore approves the escalation.
+The engine's rules state that a **High** impact alert on a **Production** service during **business hours** must be investigated. It therefore returns `True` for escalation.
 
 #### **The Output: Safe Escalation by Policy**
 
