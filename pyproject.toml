@@ -26,7 +26,8 @@ dependencies = [
     "openlit",
     "pytest",
     "pytest-asyncio",
-    "plotly"
+    "plotly",
+    "langchain-google-genai"
 ]
 
 [project.scripts]
