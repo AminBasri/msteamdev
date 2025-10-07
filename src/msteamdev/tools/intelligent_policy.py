@@ -237,8 +237,7 @@ class IntelligentPolicyEngine:
         # Rule 10: Intelligent recent escalation check (context-aware)
         recent_escalation_check = self._check_intelligent_recent_escalations(alert, context)
         if recent_escalation_check:
-            escalate = False
-            reasons = [recent_escalation_check]
+            return False, self._format_escalation_reason(alert, context, False, [recent_escalation_check], urgency)
         
         # Rule 11: Default business hours vs after-hours logic
         if not escalate:
