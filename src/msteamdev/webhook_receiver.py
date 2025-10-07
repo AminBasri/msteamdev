@@ -603,8 +603,11 @@ async def receive_alert(request: Request):
                         ticket_data = response.json().get("ticket_data", {})
                         if ticket_data and "TicketID" in ticket_data:
                             ticket_id = ticket_data["TicketID"]
-                            cache_set(f"otobo_ticket:{incident_number}", ticket_id, ttl_seconds=86400) # Cache for 24 hours
-                            webhook_logger.info(f"Created Otobo ticket {ticket_id} for incident {incident_number}")
+                            ticket_number = ticket_data.get("TicketNumber")
+                            cache_set(f"otobo_ticket:{incident_number}", ticket_id, ttl_seconds=86400)  # Cache for 24 hours
+                            if ticket_number:
+                                cache_set(f"otobo_ticket_number:{incident_number}", ticket_number, ttl_seconds=86400)  # Cache TicketNumber
+                            webhook_logger.info(f"Created Otobo ticket {ticket_id} (Number: {ticket_number}) for incident {incident_number}")
                     except Exception as e:
                         webhook_logger.error(f"Failed to create Otobo ticket for incident {incident_number}: {e}")
 
