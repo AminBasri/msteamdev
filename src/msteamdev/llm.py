@@ -32,11 +32,11 @@ def load_yaml(path):
 
 def get_llm():
     """Initialize and return an LLM instance with validated configuration."""
-    print(f"DEBUG: OLLAMA_API_BASE = {os.getenv('OLLAMA_API_BASE')}")
-    print(f"DEBUG: MODEL = {os.getenv('MODEL')}")
-    print(f"DEBUG: GEMINI_API_KEY = {os.getenv('GEMINI_API_KEY')}")
-    print(f"DEBUG: GEMINI_MODEL = {os.getenv('GEMINI_MODEL')}")
-    print(f"DEBUG: OPENAI_API_BASE_URL = {os.getenv('OPENAI_API_BASE_URL')}")
+    # print(f"DEBUG: OLLAMA_API_BASE = {os.getenv('OLLAMA_API_BASE')}")
+    # print(f"DEBUG: MODEL = {os.getenv('MODEL')}")
+    # print(f"DEBUG: GEMINI_API_KEY = {os.getenv('GEMINI_API_KEY')}")
+    # print(f"DEBUG: GEMINI_MODEL = {os.getenv('GEMINI_MODEL')}")
+    # print(f"DEBUG: OPENAI_API_BASE_URL = {os.getenv('OPENAI_API_BASE_URL')}")
     
     ollama_base_url = os.getenv("OLLAMA_API_BASE")
     gemini_api_key = os.getenv("GEMINI_API_KEY")
@@ -70,7 +70,7 @@ def get_llm():
             llm = LLM(
                 model=f"gemini/{gemini_model}",
                 api_key=gemini_api_key,
-                temperature=0.5
+                temperature=0.3
             )
             logger.info(f"Successfully initialized Gemini LLM: model=gemini/{gemini_model}")
             return llm

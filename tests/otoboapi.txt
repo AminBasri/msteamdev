@@ -1,0 +1,57 @@
+### CREATE
+url: http://10.10.6.163/otobo/nph-genericinterface.pl/Webservice/crewai/create
+Payload:
+{
+  "UserLogin": "crewai",
+  "Password": "MyFirstPwd12",
+  "Ticket": {
+    "Title": "Zabbix Alert: High CPU Usage",
+    "Queue": "Managed_Service",
+    "Lock" : "unlock",
+    "Type": "Incident",
+    "State": "new",
+    "Priority": "4 high",
+    "Owner": "noc",
+    "CustomerUser": "rfc"
+  },
+  "Article": {
+    "Subject": "High CPU Usage Alert from Zabbix",
+    "Body": "Zabbix has detected a high cpu usage issue. Details are as follows:\n\n Hostname: app-server.example.com\n Host IP: 192.168.1.20\n Trigger Name: High Memory Usage\n Trigger Severity: High\n Trigger Status: PROBLEM\n Event ID: 987654\n Event Time: 2024-12-23 14:15:00\n\n Related Item Details:\n Item Name: Memory Utilization\n Item Key: vm.memory.utilization\n Latest Value: 95%\n",
+    "ContentType": "text/plain; charset=utf8"
+  }
+}
+
+### UPDATE
+url: http://10.10.6.163/otobo/nph-genericinterface.pl/Webservice/crewai/update
+payload:
+{
+  "UserLogin": "crewai",
+  "Password": "MyFirstPwd12",
+  "TicketID": "1351",
+  "Ticket": {
+    "Priority": "5 very high",
+    "State": "open"
+  },
+  "Article": {
+    "Subject": "Update from Zabbix - CPU Alert",
+    "Body": "Zabbix event updated:\n\n Hostname: app-server.example.com\n Trigger: High CPU Usage\n Status: PROBLEM (still ongoing)\n Event ID: 987654\n New Value: 97%",
+    "ContentType": "text/plain; charset=utf8"
+  }
+}
+
+### RESOLVED
+url: http://10.10.6.163/otobo/nph-genericinterface.pl/Webservice/crewai/resolved
+payload:
+{
+  "UserLogin": "crewai",
+  "Password": "MyFirstPwd12",
+  "TicketID": "1351",
+  "Ticket": {
+    "State": "closed successful"
+  },
+  "Article": {
+    "Subject": "Zabbix Alert Resolved",
+    "Body": "The Zabbix problem has been resolved.\n\n Hostname: app-server.example.com\n Trigger: High CPU Usage\n Status: RESOLVED\n Event ID: 987654\n Recovery Time: 2024-12-23 15:10:00",
+    "ContentType": "text/plain; charset=utf8"
+  }
+}
