@@ -1,0 +1,20 @@
+stages:
+  - validate
+  - merge
+
+validate_code:
+  stage: validate
+  script:
+    - echo "Running tests..."
+    - pytest
+
+merge_to_uat:
+  stage: merge
+  script:
+    - git config --global user.name "${GITLAB_USER_NAME}"
+    - git config --global user.email "${GITLAB_USER_EMAIL}"
+    - git checkout msteamuat-dev-merge-stage
+    - git merge msteamdev
+    - git push origin msteamuat-dev-merge-stage
+  rules:
+    - if: $CI_COMMIT_BRANCH == "msteamdev"
