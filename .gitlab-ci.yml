@@ -1,0 +1,16 @@
+stages:
+  - merge
+
+merge_dev_to_uat:
+  stage: merge
+  script:
+    - echo "Merging dev into uat..."
+    - git config user.email "noramin@infopro.com.my"
+    - git config user.name "amin"
+    - git fetch origin
+    - git checkout uat
+    - git merge origin/dev --no-ff -m "Auto-merge dev into uat via CI"
+    - git push origin uat
+  only:
+    - dev
+  when: manual
