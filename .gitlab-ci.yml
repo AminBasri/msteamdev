@@ -29,7 +29,7 @@ merge_dev_to_uat:
     - git config user.name "amin"
     - git fetch origin
     - git checkout msteamuat-dev-merge-stage
-    - git merge origin/dev --no-ff -m "Auto-merge dev into uat via CI"
+    - git merge origin/msteamdev --no-ff -m "Auto-merge dev into uat via CI"
     - git push origin msteamuat-dev-merge-stage
   only:
     - dev
