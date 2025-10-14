@@ -15,6 +15,10 @@ class AlertDetail(BaseModel):
     timestamp: str
     escalation_status: str
     escalation_reason: str
+    category: Optional[str] = None
+    priority: Optional[str] = None
+    suspected_root_cause: Optional[str] = None
+    problem_id: Optional[str] = None
 
 class AlertMatchCriteria(
     BaseModel

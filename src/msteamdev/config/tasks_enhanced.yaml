@@ -78,7 +78,8 @@ notify_bau:
 
 shift_report:
   description: >
-    Generate an enhanced professional shift report email for NOC team management.
+    Generate an enhanced professional shift report email for NOC team management,
+    following ITIL best practices for daily handover.
 
     SHIFT CONTEXT:
     - Period: {shift_start} to {shift_end} (+08)
@@ -93,8 +94,11 @@ shift_report:
     - Resolved Alerts: {resolved_alerts}
     - Escalated Alerts: {escalated_alerts}
 
-    DETAILED ALERT DATA:
-    {alert_details}
+    ACTIVE INCIDENTS (HANDOVER):
+    {active_incidents_data}
+
+    RESOLVED INCIDENTS (DURING SHIFT):
+    {resolved_incidents_data}
 
     REPORT STRUCTURE REQUIREMENTS:
 
@@ -106,97 +110,63 @@ shift_report:
        a) Professional Introduction:
           - Formal greeting
           - Shift period overview with timezone
-          - Executive summary of key events
+          - Executive summary of key events and overall service health.
 
        b) Performance Analysis:
-          - Statistical breakdown of alerts
-          - Trend comparison with previous shifts
-          - Key performance indicators
-          - Resolution efficiency metrics
+          - Statistical breakdown of alerts by category and priority.
+          - Trend comparison with previous shifts (e.g., increase/decrease in critical alerts).
+          - Key performance indicators (e.g., mean time to acknowledge, mean time to resolve).
+          - Resolution efficiency metrics.
 
-       c) Critical Situations Overview:
-          - High-priority incidents
-          - Current status and impact
-          - Actions taken and results
-          - Pending resolutions
+       c) Active Incidents (Handover):
+          - For each active incident, provide:
+            - Incident Number, Title, Affected Service, Business Impact, Priority
+            - Current Status, Last Update, Suspected Root Cause/Known Problem ID (if available)
+            - Immediate Actions for Incoming Shift (clear, concise, actionable steps)
+          - Group by priority for clarity.
 
-       d) Detailed Alert Analysis:
-          For each alert, provide:
-          - Incident Number and Title
-          - Severity and Current Status
-          - Timestamp and Duration
-          - Escalation Status and Reasoning
-          - Resolution Status or Next Steps
-          Group by severity and status for clarity
+       d) Resolved Incidents (During Shift):
+          - For each resolved incident, provide:
+            - Incident Number, Title, Affected Service, Business Impact, Priority
+            - Resolution Steps, Time to Resolve, Verification
+          - Group by priority for clarity.
 
-       e) Risk Assessment:
-          - Current system health status
-          - Potential emerging issues
-          - Recommendations for monitoring
-          - Areas needing attention
+       e) Risk Assessment (ITIL Problem Management & CSI):
+          - Emerging Alert Patterns/Anomalies Detected (from GetAlertTrends tool).
+          - Potential emerging issues (flagged as potential problems).
+          - Recommendations for proactive monitoring and proactive measures (e.g., alert tuning, automation opportunities).
+          - Areas needing attention and suggestions for improvement (CSI).
 
-       f) Handover Information:
-          - Ongoing critical situations
-          - Required follow-up actions
-          - Special monitoring requirements
-          - Escalation thresholds to watch
+       f) Handover Information (ITIL Service Operation):
+          - Summary of ongoing critical situations with clear ownership and next steps.
+          - Required follow-up actions for the incoming shift.
+          - Special monitoring requirements (specific thresholds or conditions to watch for).
+          - Escalation thresholds to watch.
+          - Summary of recent changes (if available) and their impact (if any).
 
        g) Professional Closing:
-          - Summary of key action items
-          - Contact information for issues
-          - Standard signature block
+          - Summary of key action items.
+          - Contact information for issues.
+          - Standard signature block.
 
     3. Enhanced Formatting Requirements:
        - Proper section spacing using 
 
-       - Consistent bullet point formatting
-       - Clear section headers
-       - Professional tone throughout
-       - Proper timestamp formatting in +08
-       - Structured layout for readability
+       - Consistent bullet point formatting.
+       - Clear section headers.
+       - Professional tone throughout.
+       - Proper timestamp formatting in +08.
+       - Structured layout for readability.
 
     4. Signature Block:
        "Best regards,
        CrewAI Shift Reporting System
        Managed Service Team"
 
-    Must return valid ShiftReportOutput with properly formatted subject and body.
   expected_output: >
     A professional and comprehensive shift report formatted as a ShiftReportOutput object with:
     - subject: Clear and informative email subject line with proper indicators
-    - body: Well-structured email body with all required sections and proper formatting
+    - body: Well-structured email body with all required sections, ITIL-aligned content, and proper formatting
   agent: reporter
   context: []
   output_pydantic: src.msteamdev.models.ShiftReportOutput
-
-check_and_acknowledge_alert:
-  description: >
-    Manage PagerDuty incident lifecycle for incident {incident_number}:
-    
-    Workflow:
-    1. Wait for the configured acknowledgment delay
-    2. Check current incident status using GetIncidentStatus
-    3. If status is 'triggered', acknowledge using AcknowledgeIncident
-    4. Update internal tracking and cache
-    5. Log all actions for audit trail
-    
-    Error Handling:
-    - Retry on transient API failures
-    - Log all API interactions
-    - Update Redis cache appropriately
-    - Handle rate limiting gracefully
-    
-    Success Criteria:
-    - Incident successfully acknowledged in PagerDuty
-    - Internal state updated correctly
-    - Audit log entries created
-  expected_output: >
-    Status report containing:
-    - Current incident status
-    - Acknowledgment result (if performed)
-    - API interaction summary
-    - Any errors or warnings
-    - Next recommended actions
-  agent: pagerduty_manager
-  context: []
-  output_pydantic: src.msteamdev.models.IncidentManagementResult
