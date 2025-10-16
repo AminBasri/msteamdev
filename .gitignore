@@ -14,4 +14,3 @@ uv.lock
 *workspace
 cloudflared-linux-amd64*
 *.json
-# *.txt
