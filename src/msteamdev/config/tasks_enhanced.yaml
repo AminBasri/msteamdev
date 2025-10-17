@@ -170,3 +170,35 @@ shift_report:
   agent: reporter
   context: []
   output_pydantic: src.msteamdev.models.ShiftReportOutput
+
+check_and_acknowledge_alert:
+  description: >
+    Manage PagerDuty incident lifecycle for incident {incident_number}:
+    
+    Workflow:
+    1. Wait for the configured acknowledgment delay
+    2. Check current incident status using GetIncidentStatus
+    3. If status is 'triggered', acknowledge using AcknowledgeIncident
+    4. Update internal tracking and cache
+    5. Log all actions for audit trail
+    
+    Error Handling:
+    - Retry on transient API failures
+    - Log all API interactions
+    - Update Redis cache appropriately
+    - Handle rate limiting gracefully
+    
+    Success Criteria:
+    - Incident successfully acknowledged in PagerDuty
+    - Internal state updated correctly
+    - Audit log entries created
+  expected_output: >
+    Status report containing:
+    - Current incident status
+    - Acknowledgment result (if performed)
+    - API interaction summary
+    - Any errors or warnings
+    - Next recommended actions
+  agent: pagerduty_manager
+  context: []
+  output_pydantic: src.msteamdev.models.IncidentManagementResult

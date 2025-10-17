@@ -520,6 +520,39 @@ def load_tasks():
     """Load tasks from YAML."""
     return yaml.safe_load(open("src/msteamdev/config/tasks_enhanced.yaml", "r"))
 
+# Module-level cache for KB patterns
+_kb_patterns_cache = None
+_kb_patterns_timestamp = 0
+
+def get_kb_patterns():
+    global _kb_patterns_cache, _kb_patterns_timestamp
+    
+    current_time = time.time()
+    cache_age = current_time - _kb_patterns_timestamp
+    
+    if cache_age < 300 and _kb_patterns_cache:  # 5-minute cache
+        logger.debug("Using cached KB patterns")
+        return _kb_patterns_cache
+    
+    alert_patterns_path = os.path.join(
+        os.path.dirname(__file__), '..', '..', 'knowledge', 'alert_patterns.json'
+    )
+    
+    if os.path.exists(alert_patterns_path):
+        try:
+            with open(alert_patterns_path, 'r') as f:
+                _kb_patterns_cache = json.load(f)
+                _kb_patterns_timestamp = current_time
+                logger.info("Refreshed KB patterns cache")
+        except Exception as e:
+            logger.error(f"Failed to load alert_patterns.json for caching: {e}")
+            _kb_patterns_cache = {}
+    else:
+        logger.warning(f"alert_patterns.json not found at {alert_patterns_path}")
+        _kb_patterns_cache = {}
+    
+    return _kb_patterns_cache
+
 # PagerDuty helper functions (preserved)
 def get_pagerduty_session():
     token = os.getenv("PAGERDUTY_API_TOKEN")
@@ -761,16 +794,14 @@ async def run_escalation_pipeline(alert: dict):
         try:
             knowledge_base_freshness = "Knowledge base freshness: Unknown"
             alert_patterns_path = os.path.join(os.path.dirname(__file__), '..', '..', 'knowledge', 'alert_patterns.json')
-            if os.path.exists(alert_patterns_path):
-                with open(alert_patterns_path, 'r') as f:
-                    patterns_data = json.load(f)
-                    metric = alert.get('metric', '').lower()
-                    if metric in patterns_data:
-                        last_updated_str = patterns_data[metric].get("last_updated")
-                    else:
-                        last_updated_str = None
+            patterns_data = get_kb_patterns()
+            metric = alert.get('metric', '').lower()
+            if metric in patterns_data:
+                last_updated_str = patterns_data[metric].get("last_updated")
+            else:
+                last_updated_str = None
 
-                    if last_updated_str:
+            if last_updated_str:
                         last_updated = datetime.fromisoformat(last_updated_str.replace("Z", "+00:00"))
                         now = datetime.now(timezone.utc)
                         age = now - last_updated
@@ -792,9 +823,17 @@ KNOWLEDGE BASE INSIGHTS:
             logger.warning(f"Could not load knowledge base insights: {kb_error}")
             knowledge_context = "\nKNOWLEDGE BASE: Not available\n"
 
+        # Load task description from YAML
+        escalation_task_config = tasks_def["evaluate_escalation"]
         ai_analysis_task = Task(
-            description=f"Analyze the following alert and provide an escalation recommendation based on the provided knowledge base context.\n\nAlert: {json.dumps(alert)}\n\n{knowledge_context}",
-            expected_output="A detailed analysis and recommendation on whether to escalate or suppress the alert.",
+            description=escalation_task_config["description"].format(
+                title=alert['title'],
+                severity=alert['severity'],
+                incident_number=incident_number,
+                timestamp=alert['timestamp'],
+                metric=alert.get('metric', 'N/A') # Use N/A if metric is missing
+            ) + f"\n\n{knowledge_context}", # Append knowledge_context after formatting the YAML description
+            expected_output=escalation_task_config["expected_output"],
             agent=escalation_agent,
             tools=[query_knowledge_base]
         )

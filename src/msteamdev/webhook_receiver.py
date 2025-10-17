@@ -3,10 +3,11 @@
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
 from msteamdev.crew import start_alert_pipeline, get_user_email_from_pagerduty
-from msteamdev.tools.redis_client import cache_get, cache_set
+from msteamdev.tools.redis_client import cache_get, cache_set, cache_delete
 import json
 import os
 import re
+import time
 import logging
 import requests
 from datetime import datetime, timezone
@@ -22,7 +23,7 @@ OTOBO_SERVER_URL = "http://localhost:7007"
 
 # Configuration flags for filtering
 FILTER_ENABLED = True
-ALLOWED_STATUSES = ["triggered", "resolved"]
+ALLOWED_STATUSES = ["triggered", "resolved", "acknowledged"]
 
 # CrewAI Knowledge System Configuration
 CREWAI_KNOWLEDGE_BASE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "knowledge")
@@ -274,6 +275,62 @@ def save_knowledge_base(knowledge_base: dict):
     except Exception as e:
         webhook_logger.error(f"Error saving knowledge base: {e}")
 
+async def create_otobo_ticket_with_lock(incident_number: str, alert: dict) -> Optional[str]:
+    """
+    Creates an Otobo ticket with a Redis distributed lock to prevent race conditions.
+    Returns the ticket ID if created or found, otherwise None.
+    """
+    lock_key = f"otobo_create_lock:{incident_number}"
+    ticket_cache_key = f"otobo_ticket:{incident_number}"
+    
+    # Try to acquire a lock with a 10-second expiry
+    # nx=True means set the key only if it does not already exist
+    lock_acquired = cache_set(lock_key, "1", nx=True, ex=10)
+    
+    if not lock_acquired:
+        webhook_logger.info(f"Lock not acquired for incident {incident_number}. Waiting for existing ticket.")
+        # Another process is creating, wait and retrieve
+        time.sleep(0.5) # Small delay to allow other process to complete
+        existing_ticket_id = cache_get(ticket_cache_key)
+        if existing_ticket_id:
+            webhook_logger.info(f"Retrieved existing Otobo ticket {existing_ticket_id} for incident {incident_number}.")
+            return existing_ticket_id
+        else:
+            webhook_logger.warning(f"Lock not acquired and no existing ticket found after waiting for incident {incident_number}. This might indicate a failed previous attempt or a very tight race.")
+            return None # Indicate that ticket was not created by this attempt
+    
+    try:
+        # Double-check after acquiring lock, in case it was created between initial check and lock acquisition
+        existing_ticket_id = cache_get(ticket_cache_key)
+        if existing_ticket_id:
+            webhook_logger.info(f"Otobo ticket {existing_ticket_id} found after acquiring lock for incident {incident_number}. Skipping creation.")
+            return existing_ticket_id
+        
+        # Create ticket
+        create_payload = {"title": alert["title"], "body": json.dumps(alert, indent=2), "subject": f"Incident {incident_number}: {alert['title']}"}
+        response = requests.post(f"{OTOBO_SERVER_URL}/create_ticket", json=create_payload, timeout=10)
+        response.raise_for_status()
+        ticket_data = response.json().get("ticket_data", {})
+        
+        if ticket_data and "TicketID" in ticket_data:
+            ticket_id = ticket_data["TicketID"]
+            ticket_number = ticket_data.get("TicketNumber")
+            cache_set(ticket_cache_key, ticket_id, ttl_seconds=86400)  # Cache for 24 hours
+            if ticket_number:
+                cache_set(f"otobo_ticket_number:{incident_number}", ticket_number, ttl_seconds=86400)  # Cache TicketNumber
+            webhook_logger.info(f"Created Otobo ticket {ticket_id} (Number: {ticket_number}) for incident {incident_number}")
+            return ticket_id
+        else:
+            webhook_logger.error(f"Otobo ticket creation failed for incident {incident_number}: No TicketID in response.")
+            return None
+            
+    except Exception as e:
+        webhook_logger.error(f"Failed to create Otobo ticket for incident {incident_number} with lock: {e}")
+        return None
+    finally:
+        # Ensure the lock is released
+        cache_delete(lock_key)
+
 async def store_incident_knowledge(incident_number: str, knowledge_updates: List[dict], incident_info: dict, note_content: str = None):
     """Store extracted knowledge in CrewAI knowledge folder"""
     try:
@@ -471,8 +528,14 @@ async def receive_alert(request: Request):
             otobo_ticket_id = cache_get(f"otobo_ticket:{incident_number}")
             if otobo_ticket_id:
                 try:
-                    update_payload = {"ticket_id": str(otobo_ticket_id), "body": f"PagerDuty Note Added:\n\n{note_content}"}
-                    response = requests.post(f"{OTOBO_SERVER_URL}/update_ticket", json=update_payload, timeout=10)
+                    # Use the local otobo_server.py proxy endpoint
+                    otobo_update_url = f"{OTOBO_SERVER_URL}/update_ticket"
+                    update_payload = {
+                        "ticket_id": str(otobo_ticket_id),
+                        "body": f"PagerDuty Note Added:\n\n{note_content}",
+                        "subject": f"PagerDuty Note for Incident {incident_number}"
+                    }
+                    response = requests.post(otobo_update_url, json=update_payload, timeout=10)
                     response.raise_for_status()  # Raise an exception for bad status codes
                     webhook_logger.info(f"Sent update to Otobo for ticket {otobo_ticket_id}")
                 except Exception as e:
@@ -533,7 +596,7 @@ async def receive_alert(request: Request):
                 otobo_ticket_id = cache_get(f"otobo_ticket:{incident_number}")
                 if otobo_ticket_id:
                     try:
-                        resolve_payload = {"ticket_id": str(otobo_ticket_id), "body": "Incident resolved in PagerDuty."}
+                        resolve_payload = {"ticket_id": str(otobo_ticket_id), "body": "Incident resolved in PagerDuty.", "subject": f"Incident {incident_number} Resolved"}
                         requests.post(f"{OTOBO_SERVER_URL}/resolve_ticket", json=resolve_payload, timeout=10)
                         webhook_logger.info(f"Sent resolve request to Otobo for ticket {otobo_ticket_id}")
                     except Exception as e:
@@ -591,25 +654,12 @@ async def receive_alert(request: Request):
                 # Note: This is a simplified approach. A better way would be to call this *after* the crew decides to escalate.
                 # For this example, we create the ticket immediately.
                 
-                # DUPLICATE PREVENTION: Check if a ticket already exists for this incident
-                existing_ticket_id = cache_get(f"otobo_ticket:{incident_number}")
-                if existing_ticket_id:
-                    webhook_logger.info(f"Duplicate alert received. Otobo ticket {existing_ticket_id} already exists for incident {incident_number}. Skipping creation.")
-                else:
-                    try:
-                        create_payload = {"title": alert["title"], "body": json.dumps(alert, indent=2)}
-                        response = requests.post(f"{OTOBO_SERVER_URL}/create_ticket", json=create_payload, timeout=10)
-                        response.raise_for_status()
-                        ticket_data = response.json().get("ticket_data", {})
-                        if ticket_data and "TicketID" in ticket_data:
-                            ticket_id = ticket_data["TicketID"]
-                            ticket_number = ticket_data.get("TicketNumber")
-                            cache_set(f"otobo_ticket:{incident_number}", ticket_id, ttl_seconds=86400)  # Cache for 24 hours
-                            if ticket_number:
-                                cache_set(f"otobo_ticket_number:{incident_number}", ticket_number, ttl_seconds=86400)  # Cache TicketNumber
-                            webhook_logger.info(f"Created Otobo ticket {ticket_id} (Number: {ticket_number}) for incident {incident_number}")
-                    except Exception as e:
-                        webhook_logger.error(f"Failed to create Otobo ticket for incident {incident_number}: {e}")
+                # OTOBO INTEGRATION: Create ticket for escalated alert using distributed lock
+                # Note: This is a simplified approach. A better way would be to call this *after* the crew decides to escalate.
+                # For this example, we create the ticket immediately.
+                
+                # Use the new function with distributed lock
+                await create_otobo_ticket_with_lock(incident_number, alert)
 
                 result = start_alert_pipeline(alert)
                 return JSONResponse(content={"status": "received", "result": result})

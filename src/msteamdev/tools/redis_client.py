@@ -7,7 +7,7 @@ from msteamdev.logging_setup import get_module_logger
 from typing import Optional, Union
 
 # Configure centralized logger
-logger = get_module_logger('redis_client', log_filename='redis_client.log', level=logging.INFO)
+logger = get_module_logger('redis_client', log_filename='redis_client.log', level=logging.DEBUG)
 
 # Global client instance - pure sync approach following CrewAI patterns
 _redis_client: Optional[redis.Redis] = None
@@ -47,8 +47,8 @@ def init_redis():
     return redis_client
 
 # Pure sync cache functions following CrewAI patterns
-def cache_set(key: str, value: Union[dict, str], ex: int = 300, ttl_seconds: int = None):
-    """Saves a value to the cache as JSON."""
+def cache_set(key: str, value: Union[dict, str], ex: int = 300, ttl_seconds: int = None, nx: bool = False) -> bool:
+    """Saves a value to the cache as JSON, with optional NX (set if not exists) behavior."""
     # Handle parameter variations
     if ttl_seconds is not None:
         ex = ttl_seconds
@@ -58,10 +58,12 @@ def cache_set(key: str, value: Union[dict, str], ex: int = 300, ttl_seconds: int
         try:
             if isinstance(value, dict):
                 value = json.dumps(value)
-            client.set(key, value, ex=ex)
-            logger.debug(f"Cache SET: key='{key}', ttl={ex}s")
+            result = client.set(key, value, ex=ex, nx=nx)
+            logger.debug(f"Cache SET: key='{key}', ttl={ex}s, nx={nx}, result={result}")
+            return bool(result) # Ensure boolean return
         except Exception as e:
             logger.error(f"Error setting cache key '{key}': {e}")
+    return False # Return False on error or if client is not available
 
 def cache_get(key: str) -> Union[dict, str, None]:
     """Retrieves a value from the cache."""

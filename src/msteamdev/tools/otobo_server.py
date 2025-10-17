@@ -94,13 +94,17 @@ class OtoboGenericClient:
             "UserLogin": self.user_login,
             "Password": self.password,
             "TicketID": ticket_id,
-            "Ticket": ticket_properties or {},
+            "Ticket": {
+                "State": "in progress"
+            },
             "Article": {
                 "Subject": article_subject or f"Update for ticket",
                 "Body": article_body,
                 "ContentType": "text/plain; charset=utf8"
             }
         }
+        if ticket_properties: # Only add Ticket key if properties are provided
+            payload["Ticket"] = ticket_properties
         return self._make_request("update", payload)
 
     def resolve_ticket(self, ticket_id: str, article_body: str, article_subject: Optional[str] = "Ticket Resolved") -> dict:
