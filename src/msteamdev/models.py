@@ -19,6 +19,13 @@ class AlertDetail(BaseModel):
     priority: Optional[str] = None
     suspected_root_cause: Optional[str] = None
     problem_id: Optional[str] = None
+    # Timing fields for KPIs
+    acknowledged_at: Optional[str] = None
+    resolved_at: Optional[str] = None
+    closed_at: Optional[str] = None
+    first_response_at: Optional[str] = None
+    last_update_at: Optional[str] = None
+    sla_breach_at: Optional[str] = None
 
 class AlertMatchCriteria(
     BaseModel
@@ -43,11 +50,20 @@ class SimpleRecommendedActions(BaseModel):
     def format_for_email(self) -> str:
         return "\n".join([f"- {action}" for action in self.actions])
 
+class ReportMetadata(BaseModel):
+    """Only essential ITIL-relevant metadata"""
+    generation_timestamp: str = Field(..., description="Timestamp when the report was generated (UTC).")
+    alert_count: int = Field(default=0, description="Total number of alerts in the report period")
+    critical_alerts: int = Field(default=0, description="Number of critical alerts")
+    sla_breaches: int = Field(default=0, description="Number of SLA breaches")
+    mttr_minutes: float = Field(default=0.0, description="Mean Time To Resolve in minutes")
+
 class ShiftReportOutput(
     BaseModel
 ):
     subject: str
     body: str
+    metadata: Optional[ReportMetadata] = Field(None, description="Metadata about the report generation and data quality.")
 
 class EmailContent(
     BaseModel
@@ -99,6 +115,30 @@ class EscalationDecision(BaseModel):
     escalation_target: Optional[str] = Field(None, description="Recommended escalation target")
     business_hours_factor: bool = Field(..., description="Whether business hours were considered")
     suppression_window_checked: bool = Field(..., description="Whether suppression window was checked")
+
+class ShiftHandoverProtocol(BaseModel):
+    """Ensures complete knowledge transfer for shift handover."""
+    required_sections: List[str] = Field(
+        default=[
+            "EXECUTIVE SUMMARY",
+            "KEY PERFORMANCE INDICATORS",
+            "ACTIVE INCIDENTS (HANDOVER)",
+            "RESOLVED INCIDENTS (DURING SHIFT)",
+            "RISK ASSESSMENT",
+            "HANDOVER INFORMATION",
+            "DATA QUALITY INDICATORS"
+        ],
+        description="List of required sections for a complete handover report."
+    )
+
+    def validate_completeness(self, report_body: str) -> tuple[bool, List[str]]:
+        """Verify all required sections are present in the report body."""
+        missing = []
+        report_body_upper = report_body.upper()
+        for section in self.required_sections:
+            if section not in report_body_upper:
+                missing.append(section)
+        return len(missing) == 0, missing
 
 class IncidentManagementResult(BaseModel):
     """Result from PagerDuty incident management."""

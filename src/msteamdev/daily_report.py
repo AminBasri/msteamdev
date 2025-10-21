@@ -3,204 +3,641 @@ import json
 import logging
 import smtplib
 import requests
+import arrow
 from datetime import datetime, timedelta, timezone
+from typing import List, Optional, Dict, Any, Tuple, Union
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.header import Header
 from email.utils import formataddr
 from crewai import Agent, Task, Crew
-from msteamdev.crew import load_agents, load_yaml
-from msteamdev.tools.alert_store import load_log_sync, _load_log as _load_log_sync
+from dotenv import load_dotenv
 
-def check_resolution_status_sync(alert: dict, delay_minutes: int) -> bool:
-    """Synchronous version of check_resolution_status."""
-    alerts = _load_log_sync()
-    incident_number = alert.get("incident_number")
-    current_time = datetime.fromisoformat(alert["timestamp"].replace("Z", "+00:00"))
-    cutoff_time = current_time + timedelta(minutes=delay_minutes)
+# Load environment variables
+load_dotenv()
 
-    for logged_alert in alerts:
-        alert_time = datetime.fromisoformat(logged_alert["timestamp"].replace("Z", "+00:00"))
-        if (logged_alert["incident_number"] == incident_number and
-            logged_alert["status"] == "resolved" and
-            current_time <= alert_time <= cutoff_time):
-            return True
-    return False
+# Import logging setup
+from src.msteamdev.logging_setup import get_module_logger
 
-# Use the sync version
-check_resolution_status = check_resolution_status_sync
-from msteamdev.tools.intelligent_policy import intelligent_escalation_policy
-from msteamdev.tools.knowledge_base import find_similar_incidents
-from msteamdev.tools.enhanced_tools import (
-    read_alert_log_enhanced,
-    get_alert_trends
-)
-from msteamdev.models import (
+# Configure logging
+logger = get_module_logger(__name__, log_filename='report.log')
+
+# Configure timezone
+LOCAL_TZ_NAME = os.getenv("LOCAL_TZ_NAME", "Asia/Kuala_Lumpur")
+
+# Import models and tools
+from src.msteamdev.models import (
+    ReportMetadata,
     ShiftReportOutput,
     AlertDetail,
     AlertMatchCriteria,
-    GetMatchingAlertsInput,
-    AlertMatchCriteria,
-    GetMatchingAlertsInput
 )
-from pydantic import BaseModel
-import pytz
-import re
+from src.msteamdev.crew import load_agents, load_yaml
+from src.msteamdev.tools.alert_cache import ALERT_CACHE
+from src.msteamdev.tools.report_metrics import REPORT_METRICS, ReportGenerationMetric
 
-from msteamdev.logging_setup import get_module_logger
+class ShiftConfig:
+    """Centralized shift configuration."""
+    SHIFT_MORNING_START = 7
+    SHIFT_MORNING_END = 16
+    SHIFT_EVENING_START = 16
+    SHIFT_EVENING_END = 23
+    ESCALATION_DELAY_MINUTES = int(os.getenv("ESCALATION_DELAY_MINUTES", "25"))
+    CRITICAL_ALERT_THRESHOLD_RED = int(os.getenv("CRITICAL_ALERT_THRESHOLD_RED", "5"))
+    CRITICAL_ALERT_THRESHOLD_AMBER = int(os.getenv("CRITICAL_ALERT_THRESHOLD_AMBER", "3"))
+    ESCALATED_ALERT_THRESHOLD_RED = int(os.getenv("ESCALATED_ALERT_THRESHOLD_RED", "3"))
+    ESCALATED_ALERT_THRESHOLD_AMBER = int(os.getenv("ESCALATED_ALERT_THRESHOLD_AMBER", "2"))
 
-# Centralized named logger for this module
-logger = get_module_logger('report', log_filename='report.log', level=logging.INFO)
 
-LOG_PATH = "src/msteamdev/alert_log.json"
-LOCAL_TZ = pytz.timezone('Asia/Singapore')
-
-def validate_rocketchat_webhook() -> tuple[bool, str]:
-    """Validate Rocket.Chat webhook configuration."""
-    webhook_url = os.getenv("ROCKETCHAT_WEBHOOK_URL")
-    webhook_token = os.getenv("ROCKETCHAT_WEBHOOK_TOKEN")
-
-    if not webhook_url or not webhook_token:
-        return False, "Missing ROCKETCHAT_WEBHOOK_URL or ROCKETCHAT_WEBHOOK_TOKEN environment variables"
-    return True, "Rocket.Chat webhook configuration is valid"
-
-def send_rocketchat_webhook_message(message: str) -> bool:
-    """Send a message to Rocket.Chat using the webhook."""
-    is_valid, config_message = validate_rocketchat_webhook()
-    if not is_valid:
-        logger.error(f"Rocket.Chat webhook validation failed: {config_message}")
-        return False
-
-    webhook_url = os.getenv("ROCKETCHAT_WEBHOOK_URL")
-    webhook_token = os.getenv("ROCKETCHAT_WEBHOOK_TOKEN")
-
-    payload = {
-        "alias": "CrewAI Shift Reporting System",
-        "text": message
-    }
-
-    headers = {
-        "Content-Type": "application/json"
-    }
-
+def parse_ts_utc(ts: Optional[str]) -> arrow.arrow.Arrow:
+    """Parse an ISO timestamp string and return an Arrow object in UTC.
+    
+    Accepts ISO timestamps in any of these formats:
+    - With Z suffix (e.g., 2025-10-21T00:42:01Z)
+    - With timezone offset (e.g., 2025-10-21T00:42:01+00:00)
+    - Without timezone (assumed UTC)
+    
+    Returns arrow.Arrow in UTC.
+    """
+    if not ts:
+        raise ValueError("Empty timestamp")
+    
     try:
-        response = requests.post(webhook_url, json=payload, headers=headers, timeout=10)
-        if response.status_code == 200:
-            logger.info("Rocket.Chat webhook message sent successfully")
-            return True
+        # arrow.get() handles most ISO formats automatically
+        parsed = arrow.get(ts)
+        
+        # For timestamps without explicit timezone, treat as UTC
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo='UTC')
+            
+        # Convert to UTC
+        utc_ts = parsed.to('UTC')
+        
+        # Verify the timestamp is reasonable (not too far in past/future)
+        now = arrow.utcnow()
+        if utc_ts.year < 2020 or utc_ts.year > 2030:
+            raise ValueError(f"Timestamp year {utc_ts.year} outside reasonable range")
+            
+        return utc_ts
+        
+    except (arrow.parser.ParserError, ValueError) as e:
+        raise ValueError(f"Invalid timestamp format: {ts}") from e
+
+
+def to_local_str(ts_arrow: arrow.arrow.Arrow, fmt: str = 'YYYY-MM-DD HH:mm:ss') -> str:
+    """Convert an Arrow UTC timestamp to the local timezone and format as string."""
+    return ts_arrow.to(LOCAL_TZ_NAME).format(fmt)
+
+
+def _load_log_sync() -> List[Dict[str, Any]]:
+    """Load alert log synchronously."""
+    try:
+        log_file = os.path.join(os.path.dirname(__file__), "alert_log.json")
+        with open(log_file, 'r') as f:
+            return [json.loads(line) for line in f if line.strip()]
+    except FileNotFoundError:
+        logger.warning(f"Alert log file not found")
+        return []
+
+
+def load_alerts(start_time: datetime, end_time: datetime) -> List[Dict[str, Any]]:
+    """Load alerts for the specified time period.
+    
+    Args:
+        start_time: Start of the search window (timezone-aware datetime)
+        end_time: End of the search window (timezone-aware datetime)
+        
+    Returns:
+        List of matching alert dictionaries with final status for each incident
+    """
+    # Load from cache
+    alerts, last_update, source = ALERT_CACHE.get_alerts(force_refresh=True)
+    logger.info(f"Loaded {len(alerts)} total alerts from {source}")
+    
+    # Convert start/end times to UTC Arrow objects for comparison
+    try:
+        if start_time.tzinfo is None:
+            start_arrow = arrow.get(start_time, LOCAL_TZ_NAME).to('UTC')
         else:
-            logger.error(f"Rocket.Chat webhook failed: HTTP {response.status_code}, Response: {response.text}")
-            return False
+            start_arrow = arrow.get(start_time).to('UTC')
+            
+        if end_time.tzinfo is None:
+            end_arrow = arrow.get(end_time, LOCAL_TZ_NAME).to('UTC')
+        else:
+            end_arrow = arrow.get(end_time).to('UTC')
+        
+        logger.info(f"Search window UTC: {start_arrow.format('YYYY-MM-DD HH:mm:ss ZZ')} to {end_arrow.format('YYYY-MM-DD HH:mm:ss ZZ')}")
+        logger.info(f"Search window Local: {start_arrow.to(LOCAL_TZ_NAME).format('YYYY-MM-DD HH:mm:ss ZZ')} to {end_arrow.to(LOCAL_TZ_NAME).format('YYYY-MM-DD HH:mm:ss ZZ')}")
+        
     except Exception as e:
-        logger.error(f"Failed to send Rocket.Chat webhook message: {e}")
+        logger.error(f"Error converting search window times: {e}")
+        return []
+
+    # Track incident state transitions
+    incident_states = {}
+    valid_count = 0
+    invalid_count = 0
+    outside_window_count = 0
+    
+    # Status priority: resolved > acknowledged > triggered
+    STATUS_PRIORITY = {
+        'resolved': 3,
+        'acknowledged': 2,
+        'triggered': 1
+    }
+    
+    # Process each alert in order (they're already in chronological order in the log)
+    for idx, alert in enumerate(alerts):
+        try:
+            incident_number = str(alert.get('incident_number', ''))
+            if not incident_number:
+                continue
+            
+            # Parse alert timestamp
+            timestamp = alert.get('timestamp')
+            try:
+                alert_arrow = parse_ts_utc(timestamp)
+                valid_count += 1
+            except ValueError:
+                invalid_count += 1
+                logger.debug(f"Invalid timestamp for alert {incident_number}: {timestamp}")
+                continue
+            
+            # Check if in window
+            in_window = start_arrow <= alert_arrow <= end_arrow
+            
+            if in_window:
+                status = alert.get('status', '').lower()
+                
+                # Initialize incident tracking if not exists
+                if incident_number not in incident_states:
+                    incident_states[incident_number] = {
+                        'first_alert': alert,
+                        'current_alert': alert,
+                        'status_sequence': [status],
+                        'timestamps': [alert_arrow],
+                        'log_order': idx
+                    }
+                    logger.debug(f"New incident {incident_number} with status '{status}' at {to_local_str(alert_arrow)}")
+                else:
+                    # Update incident state
+                    state = incident_states[incident_number]
+                    state['status_sequence'].append(status)
+                    state['timestamps'].append(alert_arrow)
+                    state['log_order'] = idx  # Track latest position in log
+                    
+                    # Determine which alert to keep based on:
+                    # 1. Higher status priority (resolved > acknowledged > triggered)
+                    # 2. If same priority, keep the later one in the log
+                    current_priority = STATUS_PRIORITY.get(state['current_alert'].get('status', '').lower(), 0)
+                    new_priority = STATUS_PRIORITY.get(status, 0)
+                    
+                    if new_priority > current_priority:
+                        state['current_alert'] = alert
+                        logger.debug(f"Updated incident {incident_number} to higher priority status '{status}' at {to_local_str(alert_arrow)}")
+                    elif new_priority == current_priority:
+                        # Same priority - this is a duplicate or re-notification, keep the latest in log
+                        state['current_alert'] = alert
+                        logger.debug(f"Updated incident {incident_number} to same status '{status}' (later in log)")
+            else:
+                outside_window_count += 1
+                    
+        except Exception as e:
+            logger.error(f"Error processing alert {alert.get('incident_number', 'Unknown')}: {str(e)}")
+            continue
+    
+    # Extract final state for each incident
+    filtered_alerts = []
+    for incident_number, state in incident_states.items():
+        final_alert = state['current_alert']
+        final_status = final_alert.get('status', '').lower()
+        
+        logger.debug(f"Incident {incident_number} final state: {final_status}")
+        logger.debug(f"  Status sequence: {' -> '.join(state['status_sequence'])}")
+        
+        filtered_alerts.append(final_alert)
+    
+    logger.info(f"Alert filtering summary:")
+    logger.info(f"  - Valid timestamps: {valid_count}")
+    logger.info(f"  - Invalid timestamps: {invalid_count}")
+    logger.info(f"  - Outside window: {outside_window_count}")
+    logger.info(f"  - Unique incidents in window: {len(filtered_alerts)}")
+    
+    # Log final status distribution
+    status_counts = {}
+    for alert in filtered_alerts:
+        status = alert.get('status', 'unknown')
+        status_counts[status] = status_counts.get(status, 0) + 1
+    logger.info(f"  - Final status distribution: {status_counts}")
+    
+    return filtered_alerts
+
+
+def check_escalation_eligibility(alert_data: Dict[str, Any]) -> Tuple[bool, str]:
+    """Check if an alert was actually escalated by checking the escalation log."""
+    try:
+        log_file = os.path.join(os.path.dirname(__file__), "escalation_log.json")
+        with open(log_file, 'r') as f:
+            for line in f:
+                escalation = json.loads(line)
+                if str(escalation.get('incident_number')) == str(alert_data.get('incident_number')):
+                    if escalation.get('escalated', False):
+                        return True, escalation.get('reason', 'Alert was escalated')
+                    return False, "Alert was not escalated"
+        return False, "No escalation record found"
+    except FileNotFoundError:
+        logger.warning(f"Escalation log file not found at {log_file}")
+        return False, "Escalation log not found"
+    except Exception as e:
+        logger.error(f"Error checking escalation status: {e}")
+        return False, f"Error checking escalation: {str(e)}"
+
+
+def check_resolution_status(alert: dict, delay_minutes: int) -> bool:
+    """Check if alert was resolved within delay period."""
+    alerts = _load_log_sync()
+    incident_number = alert.get("incident_number")
+    
+    try:
+        current_time = parse_ts_utc(alert.get("timestamp"))
+        cutoff_time = current_time.shift(minutes=+delay_minutes)
+    except ValueError:
         return False
 
-def format_rocketchat_webhook_report(subject: str, body: str) -> str:
-    """Format shift report for Rocket.Chat webhook."""
-    # Remove email-specific greeting and signoff, adapt for Rocket.Chat
-    body_lines = body.split("\n")
-    filtered_body = [line for line in body_lines if not line.startswith("Dear NOC Team") and not line.startswith("Best regards") and not line.startswith("CrewAI") and not line.startswith("Managed Service Team")]
-    return f"**{subject}**\n\n" + "\n".join(filtered_body)
+    for logged_alert in alerts:
+        try:
+            alert_time = parse_ts_utc(logged_alert.get("timestamp"))
+            if (logged_alert.get("incident_number") == incident_number and
+                logged_alert.get("status") == "resolved" and
+                current_time <= alert_time <= cutoff_time):
+                return True
+        except ValueError:
+            continue
+    return False
 
-def load_alerts(start_time: datetime, end_time: datetime):
-    """Load alerts from the log within the specified time window, deduplicating by incident_number."""
-    if not os.path.exists(LOG_PATH):
-        logger.warning(f"Alert log not found at {LOG_PATH}")
-        return []
+
+def calculate_shift_kpis(alerts: List[dict], shift_start: arrow.arrow.Arrow, shift_end: arrow.arrow.Arrow) -> dict:
+    """Calculate key operational metrics for the shift."""
+    logger.info(f"Calculating KPIs for {len(alerts)} alerts")
+    
+    if not alerts:
+        logger.info("No alerts to calculate KPIs for")
+        return {
+            "total_alerts": 0,
+            "unique_alerts": 0,
+            "resolved_alerts": 0,
+            "acknowledged_alerts": 0,
+            "critical_alerts": 0,
+            "warning_alerts": 0,
+            "escalated_alerts": 0,
+            "resolution_rate": "0.0%",
+            "acknowledgment_rate": "0.0%",
+            "escalation_rate": "0.0%",
+            "mean_time_to_resolve": "N/A",
+            "mean_time_to_acknowledge": "N/A",
+            "mean_time_to_first_response": "N/A",
+            "sla_breaches": 0,
+            "sla_compliance": "N/A",
+            "sla_compliance_percentage": "N/A"
+        }
+    
+    # Load all alerts to track full state progression
+    all_alerts = _load_log_sync()
+    
+    # Track state transitions for each incident
+    incident_states = {}
+    
+    # First, identify which incidents are in our window
+    incident_numbers_in_window = set()
+    for alert in alerts:
+        incident_numbers_in_window.add(str(alert.get('incident_number')))
+    
+    logger.info(f"Tracking state transitions for {len(incident_numbers_in_window)} incidents")
+    
+    # Process all alerts to track state transitions for incidents in our window
+    for alert in all_alerts:
+        inc_num = str(alert.get('incident_number'))
+        if inc_num not in incident_numbers_in_window:
+            continue
+            
+        status = alert.get("status", "").lower()
+        
+        try:
+            timestamp = parse_ts_utc(alert.get('timestamp'))
+        except ValueError:
+            continue
+        
+        if inc_num not in incident_states:
+            incident_states[inc_num] = {
+                'triggered_at': None,
+                'acknowledged_at': None,
+                'resolved_at': None,
+                'severity': alert.get("severity", "").lower(),
+                'final_status': status,
+                'all_statuses': []
+            }
+        
+        state = incident_states[inc_num]
+        state['all_statuses'].append((status, timestamp))
+        state['final_status'] = status  # Keep updating to get final status
+        
+        # Track timing for each state (keep earliest occurrence)
+        if status == 'triggered' and state['triggered_at'] is None:
+            state['triggered_at'] = timestamp
+        elif status == 'acknowledged' and state['acknowledged_at'] is None:
+            state['acknowledged_at'] = timestamp
+        elif status == 'resolved':
+            state['resolved_at'] = timestamp  # Keep updating to get final resolution time
+    
+    # Calculate metrics based on final states
+    unique_alerts = len(incident_states)
+    resolved_alerts = sum(1 for state in incident_states.values() if state['final_status'] == 'resolved')
+    acknowledged_alerts = sum(1 for state in incident_states.values() if state['final_status'] in ['acknowledged', 'resolved'])
+    active_alerts = sum(1 for state in incident_states.values() if state['final_status'] != 'resolved')
+    critical_alerts = sum(1 for state in incident_states.values() if state['severity'] == 'critical')
+    warning_alerts = sum(1 for state in incident_states.values() if state['severity'] == 'warning')
+    
+    logger.info(f"Status summary:")
+    logger.info(f"  - Unique incidents: {unique_alerts}")
+    logger.info(f"  - Resolved: {resolved_alerts}")
+    logger.info(f"  - Acknowledged: {acknowledged_alerts}")
+    logger.info(f"  - Active: {active_alerts}")
+    logger.info(f"  - Critical: {critical_alerts}")
+    logger.info(f"  - Warning: {warning_alerts}")
+    
+    # Calculate timing metrics
+    ttr_values = []  # Time to resolve
+    tta_values = []  # Time to acknowledge
+    ttfr_values = []  # Time to first response
+    
+    for inc_num, state in incident_states.items():
+        if state['triggered_at']:
+            # Time to acknowledge
+            if state['acknowledged_at']:
+                tta = (state['acknowledged_at'] - state['triggered_at']).total_seconds() / 60
+                if tta >= 0:
+                    tta_values.append(tta)
+                    ttfr_values.append(tta)  # First response was acknowledgment
+                    logger.debug(f"Incident {inc_num}: TTA = {tta:.1f}m")
+            
+            # Time to resolve
+            if state['resolved_at']:
+                ttr = (state['resolved_at'] - state['triggered_at']).total_seconds() / 60
+                if ttr >= 0:
+                    ttr_values.append(ttr)
+                    # If resolved without acknowledgment, count as first response
+                    if not state['acknowledged_at']:
+                        ttfr_values.append(ttr)
+                    logger.debug(f"Incident {inc_num}: TTR = {ttr:.1f}m")
+    
+    # Calculate escalations based on actual escalation records
+    escalated_alerts = []
+    for alert in alerts:
+        is_escalated, reason = check_escalation_eligibility(alert)
+        if is_escalated:
+            escalated_alerts.append(alert)
+            logger.info(f"Found escalated alert {alert.get('incident_number')}: {reason}")
+    
+    # Calculate rates
+    resolution_rate = (resolved_alerts / unique_alerts * 100) if unique_alerts > 0 else 0.0
+    ack_rate = (acknowledged_alerts / unique_alerts * 100) if unique_alerts > 0 else 0.0
+    escalation_rate = (len(escalated_alerts) / unique_alerts * 100) if unique_alerts > 0 else 0.0
+    
+    # Calculate averages
+    mean_time_to_resolve = f"{sum(ttr_values) / len(ttr_values):.1f}m" if ttr_values else "N/A"
+    mean_time_to_acknowledge = f"{sum(tta_values) / len(tta_values):.1f}m" if tta_values else "N/A"
+    mean_time_to_first_response = f"{sum(ttfr_values) / len(ttfr_values):.1f}m" if ttfr_values else "N/A"
+    
+    # SLA metrics (30 minute response SLA)
+    sla_threshold = 30
+    sla_breaches = sum(1 for t in ttfr_values if t > sla_threshold)
+    total_with_sla = len(ttfr_values)
+    sla_compliance = f"{((total_with_sla - sla_breaches) / total_with_sla * 100):.1f}%" if total_with_sla > 0 else "N/A"
+    
+    logger.info(f"Timing metrics:")
+    logger.info(f"  - MTTR: {mean_time_to_resolve}")
+    logger.info(f"  - MTTA: {mean_time_to_acknowledge}")
+    logger.info(f"  - MTTR: {mean_time_to_first_response}")
+    logger.info(f"  - SLA breaches: {sla_breaches}/{total_with_sla}")
+    logger.info(f"  - SLA compliance: {sla_compliance}")
+    
+    return {
+        "total_alerts": len(alerts),
+        "unique_alerts": unique_alerts,
+        "resolved_alerts": resolved_alerts,
+        "acknowledged_alerts": acknowledged_alerts,
+        "critical_alerts": critical_alerts,
+        "warning_alerts": warning_alerts,
+        "escalated_alerts": escalated_alerts,
+        "resolution_rate": f"{resolution_rate:.1f}%",
+        "acknowledgment_rate": f"{ack_rate:.1f}%",
+        "escalation_rate": f"{escalation_rate:.1f}%",
+        "mean_time_to_resolve": mean_time_to_resolve,
+        "mean_time_to_acknowledge": mean_time_to_acknowledge,
+        "mean_time_to_first_response": mean_time_to_first_response,
+        "sla_breaches": sla_breaches,
+        "sla_compliance": sla_compliance,
+        "sla_compliance_percentage": sla_compliance
+    }
+
+
+def create_metadata(alerts: Optional[List[Dict[str, Any]]] = None) -> ReportMetadata:
+    """Create report metadata."""
+    now = datetime.now(timezone.utc)
+    
+    if not alerts:
+        return ReportMetadata(
+            generation_timestamp=now.isoformat(),
+            alert_count=0,
+            critical_alerts=0,
+            sla_breaches=0,
+            mttr_minutes=0.0
+        )
+    
+    critical_count = sum(1 for a in alerts if a.get('severity') == 'critical')
+    sla_breaches = 0  # Calculate if needed
+    
+    # Calculate MTTR for resolved alerts
+    resolved_alerts = []
+    for a in alerts:
+        if a.get('status') == 'resolved' and a.get('timestamp'):
+            try:
+                resolved_alerts.append(a)
+            except:
+                pass
+    
+    mttr = 0.0
+    if resolved_alerts:
+        try:
+            total_time = 0
+            count = 0
+            for a in resolved_alerts:
+                try:
+                    created = parse_ts_utc(a['timestamp'])
+                    # Assume resolution time is proportional to number of state changes
+                    # This is a simplification - adjust based on your data
+                    count += 1
+                except:
+                    pass
+            if count > 0:
+                mttr = total_time / count / 60  # Convert to minutes
+        except:
+            pass
+    
+    return ReportMetadata(
+        generation_timestamp=now.isoformat(),
+        alert_count=len(alerts),
+        critical_alerts=critical_count,
+        sla_breaches=sla_breaches,
+        mttr_minutes=mttr
+    )
+
+
+def send_report_email(subject: str, body: str, report_metadata: Optional[ReportMetadata] = None) -> bool:
+    """Send the report via email."""
+    smtp_host = os.getenv('SMTP_HOST', '')
+    smtp_port = int(os.getenv('SMTP_PORT', '587'))
+    smtp_username = os.getenv('SMTP_USERNAME', '')
+    smtp_password = os.getenv('SMTP_PASSWORD', '')
+    report_email = os.getenv('REPORT_EMAIL', '')
+    
+    if not all([smtp_host, smtp_username, smtp_password, report_email]):
+        logger.error("Missing SMTP configuration")
+        return False
+        
     try:
-        # Dictionary to store the latest alert for each incident_number
-        alert_dict = {}
-        with open(LOG_PATH, "r") as f:
-            for line in f:
-                alert = json.loads(line)
-                alert_time = datetime.fromisoformat(alert["timestamp"].replace("Z", "+00:00")).replace(tzinfo=timezone.utc)
-                if start_time <= alert_time <= end_time:
-                    incident_number = alert.get("incident_number")
-                    if incident_number not in alert_dict or alert_time > datetime.fromisoformat(alert_dict[incident_number]["timestamp"].replace("Z", "+00:00")).replace(tzinfo=timezone.utc):
-                        alert_dict[incident_number] = alert
-        return list(alert_dict.values())
-    except Exception as e:
-        logger.error(f"Failed to load alerts: {e}")
-        return []
+        logger.info(f"Preparing to send email to {report_email}")
+        msg = MIMEMultipart('alternative')
+        msg['Subject'] = subject
+        msg['From'] = formataddr((str(Header('NOC Team', 'utf-8')), 'noc@infopro.com.my'))
+        msg['To'] = report_email
+        
+        text = MIMEText(body, 'plain')
+        msg.attach(text)
 
-def send_report_email(subject: str, body: str):
-    """Send the shift report email and Rocket.Chat webhook message to the NOC team."""
-    smtp_host = os.getenv("SMTP_HOST")
-    smtp_port = int(os.getenv("SMTP_PORT", 587))
-    smtp_username = os.getenv("SMTP_USERNAME")
-    smtp_password = os.getenv("SMTP_PASSWORD")
-    recipients = [email.strip() for email in os.getenv("REPORT_EMAIL", "").split(",") if email.strip()]
-    sender_name = os.getenv("SENDER_NAME", "CrewAI Reporting System")
-    sender_email = os.getenv("REPORT_EMAIL", smtp_username)
-
-    if not all([smtp_host, smtp_port, smtp_username, smtp_password, recipients]):
-        logger.error("Missing SMTP configuration or recipients")
-        raise ValueError("Incomplete SMTP configuration")
-
-    msg = MIMEMultipart()
-    msg['From'] = formataddr((str(Header(sender_name, 'utf-8')), sender_email))
-    msg['To'] = ", ".join(recipients)
-    msg['Subject'] = subject
-    msg.attach(MIMEText(body, 'plain', 'utf-8'))
-
-    try:
-        with smtplib.SMTP(smtp_host, smtp_port) as server:
+        logger.info(f"Connecting to SMTP server {smtp_host}:{smtp_port}")
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as server:
             server.starttls()
             server.login(smtp_username, smtp_password)
-            server.sendmail(sender_email, recipients, msg.as_string())
-            logger.info(f"Shift report emailed to {', '.join(recipients)}")
-    except smtplib.SMTPAuthenticationError:
-        logger.error("SMTP authentication failed")
-        raise
-    except smtplib.SMTPRecipientsRefused as e:
-        logger.error(f"SMTP recipients refused: {e}")
-        raise
-    except smtplib.SMTPException as e:
-        logger.error(f"SMTP error: {e}")
-        raise
+            server.send_message(msg)
+            logger.info(f"Successfully sent shift report email to {msg['To']}")
+            return True
+            
     except Exception as e:
-        logger.error(f"Failed to send shift report email: {e}")
-        raise
+        logger.error(f"Failed to send email: {str(e)}")
+        return False
 
-    # Send to Rocket.Chat webhook
-    rocketchat_message = format_rocketchat_webhook_report(subject, body)
-    if send_rocketchat_webhook_message(rocketchat_message):
-        logger.info("Shift report sent to Rocket.Chat webhook successfully")
-    else:
-        logger.warning("Failed to send shift report to Rocket.Chat webhook, but email was sent")
 
-def run(shift_type=None, shift_start=None, shift_end=None):
-    """Run the shift report task to summarize and email alert activity."""
-    now = datetime.now(LOCAL_TZ)
-    if shift_type == "weekly":
-        pass
-    elif shift_type is None:
-        if 7 <= now.hour < 16:
+def send_rocketchat_webhook_message(message: str) -> bool:
+    """Send a message to Rocket.Chat via webhook."""
+    webhook_url = os.getenv("ROCKETCHAT_WEBHOOK_URL", "")
+    
+    if not webhook_url:
+        logger.warning("ROCKETCHAT_WEBHOOK_URL not configured")
+        return False
+        
+    webhook_token = os.getenv("ROCKETCHAT_WEBHOOK_TOKEN")
+    if webhook_token and webhook_token not in webhook_url:
+        webhook_url = f"{webhook_url}/{webhook_token}"
+    
+    try:
+        payload = {
+            "text": message,
+            "alias": "NOC Shift Report",
+            "emoji": ":memo:"
+        }
+        response = requests.post(webhook_url, json=payload, timeout=10)
+        if response.status_code == 200:
+            logger.info("Successfully sent Rocket.Chat webhook notification")
+            return True
+        else:
+            logger.error(f"Rocket.Chat webhook failed: {response.status_code}")
+            return False
+    except Exception as e:
+        logger.error(f"Failed to send Rocket.Chat webhook: {str(e)}")
+        return False
+
+
+def extract_report_output(result: Any, logger: logging.Logger) -> ShiftReportOutput:
+    """Extract report output from crew result."""
+    try:
+        if hasattr(result, 'pydantic') and result.pydantic:
+            logger.info("Using pydantic structured output")
+            return result.pydantic
+            
+        elif hasattr(result, 'json_dict') and result.json_dict:
+            logger.info("Using json_dict output")
+            return ShiftReportOutput(**result.json_dict)
+            
+        elif hasattr(result, 'raw') and result.raw:
+            logger.info("Parsing raw output")
+            lines = result.raw.split('\n')
+            subject = lines[0] if lines else "NOC Shift Report"
+            body = '\n'.join(lines[1:]) if len(lines) > 1 else "No content available"
+            
+            return ShiftReportOutput(
+                subject=subject,
+                body=body,
+                metadata=create_metadata()
+            )
+    except Exception as e:
+        logger.error(f"Failed to extract report: {e}")
+    
+    # Fallback
+    return ShiftReportOutput(
+        subject="NOC Shift Report",
+        body="Report generation encountered an error.",
+        metadata=create_metadata()
+    )
+
+
+def run(shift_type: Optional[str] = None, shift_start: Optional[datetime] = None, shift_end: Optional[datetime] = None):
+    """Run the shift report task."""
+    
+    # Get current time in local timezone
+    now_local = arrow.now(LOCAL_TZ_NAME)
+    
+    # Determine shift type
+    if shift_type is None:
+        current_hour = now_local.hour
+        if ShiftConfig.SHIFT_MORNING_START <= current_hour < ShiftConfig.SHIFT_MORNING_END:
             shift_type = "morning"
-        elif 13 <= now.hour < 22:
+        elif ShiftConfig.SHIFT_EVENING_START <= current_hour < ShiftConfig.SHIFT_EVENING_END:
             shift_type = "evening"
         else:
-            shift_type = "morning"  # Default/fallback
-    logger.info(f"Starting {shift_type} shift report generation")
-
-    if shift_type == "morning":
-        shift_start = now.replace(hour=7, minute=0, second=0, microsecond=0)
-        shift_end = now.replace(hour=16, minute=0, second=0, microsecond=0)
-    elif shift_type == "evening":  # evening shift
-        shift_start = now.replace(hour=13, minute=0, second=0, microsecond=0)
-        shift_end = now.replace(hour=22, minute=0, second=0, microsecond=0)
-
-    # If current time is before shift_start, use previous day's window
-    if shift_type != "weekly" and now < shift_start:
-        shift_start -= timedelta(days=1)
-        shift_end -= timedelta(days=1)
-
-    # Convert to UTC for comparison with log timestamps
-    shift_start_utc = shift_start.astimezone(timezone.utc)
-    shift_end_utc = shift_end.astimezone(timezone.utc)
-
-    alerts = load_alerts(shift_start_utc, shift_end_utc)
-
+            shift_type = "morning"
+    
+    logger.info(f"Starting {shift_type} shift report generation at {now_local.format('YYYY-MM-DD HH:mm:ss ZZ')}")
+    
+    # Set shift times
+    if shift_start is None or shift_end is None:
+        current_hour = now_local.hour
+        
+        if shift_type == "morning":
+            if current_hour < ShiftConfig.SHIFT_MORNING_START:
+                shift_start_local = now_local.shift(days=-1).replace(hour=ShiftConfig.SHIFT_MORNING_START, minute=0, second=0, microsecond=0)
+                shift_end_local = now_local.shift(days=-1).replace(hour=ShiftConfig.SHIFT_MORNING_END, minute=0, second=0, microsecond=0)
+            else:
+                shift_start_local = now_local.replace(hour=ShiftConfig.SHIFT_MORNING_START, minute=0, second=0, microsecond=0)
+                shift_end_local = now_local.replace(hour=ShiftConfig.SHIFT_MORNING_END, minute=0, second=0, microsecond=0)
+        else:
+            if current_hour < ShiftConfig.SHIFT_EVENING_START:
+                shift_start_local = now_local.shift(days=-1).replace(hour=ShiftConfig.SHIFT_EVENING_START, minute=0, second=0, microsecond=0)
+                shift_end_local = now_local.shift(days=-1).replace(hour=ShiftConfig.SHIFT_EVENING_END, minute=0, second=0, microsecond=0)
+            else:
+                shift_start_local = now_local.replace(hour=ShiftConfig.SHIFT_EVENING_START, minute=0, second=0, microsecond=0)
+                shift_end_local = now_local.replace(hour=ShiftConfig.SHIFT_EVENING_END, minute=0, second=0, microsecond=0)
+        
+        shift_start = shift_start_local.datetime
+        shift_end = shift_end_local.datetime
+    
+    logger.info(f"Shift window: {shift_start} to {shift_end}")
+    
+    # Load alerts
+    alerts = load_alerts(shift_start, shift_end)
+    logger.info(f"Processing {len(alerts)} alerts for report")
+    
+    # Load agents and tasks
     agents = load_agents()
     tasks_def = load_yaml("src/msteamdev/config/tasks_enhanced.yaml")
     
@@ -208,69 +645,27 @@ def run(shift_type=None, shift_start=None, shift_end=None):
     if not reporter_agent:
         logger.error("Missing reporter agent")
         return
-
+    
     report_task_def = tasks_def.get("shift_report")
     if not report_task_def:
         logger.error("Missing shift_report task definition")
         return
-
-    # Prepare alert data using enhanced tools
-    delay_minutes = int(os.getenv("ESCALATION_DELAY_MINUTES", "25"))
     
-    # Initialize lists for active and resolved incidents
-    active_incidents = []
-    resolved_incidents = []
-    
-    # Get enhanced data with fallback to basic processing
-    try:
-        # For now, overall service health is not directly derived from CrewAI internal health.
-        # It will be generated by the agent based on alert data and trends.
-        overall_service_health_summary = "Summary of overall service health will be provided by the agent."
+    # Process alerts
+    alert_summary = []
+    for alert in alerts:
+        try:
+            eligible, reason = check_escalation_eligibility(alert)
+            was_resolved = check_resolution_status(alert, ShiftConfig.ESCALATION_DELAY_MINUTES)
+            escalation_status = "Escalated" if eligible and not was_resolved else "Not Escalated"
+            
+            try:
+                alert_ts = parse_ts_utc(alert.get('timestamp'))
+                alert_timestamp_local = to_local_str(alert_ts)
+            except:
+                alert_timestamp_local = 'Unknown'
 
-        for alert in alerts:
-            # Use enhanced escalation eligibility check
-            escalation_result = json.loads(intelligent_escalation_policy.run(json.dumps(alert)))
-            
-            was_resolved = check_resolution_status(alert, delay_minutes)
-            escalation_status = "Escalated" if escalation_result["eligible"] and not was_resolved else "Not Escalated"
-            
-            # Get pattern analysis for this type of alert
-            pattern_analysis = json.loads(find_similar_incidents._run(
-                alert_title=alert.get("title"),
-                alert_severity=alert.get("severity"),
-                alert_metric=alert.get("metric")
-            ))
-            
-            # Convert alert timestamp to local timezone
-            alert_timestamp_utc = datetime.fromisoformat(alert.get('timestamp', 'N/A').replace("Z", "+00:00")).replace(tzinfo=timezone.utc)
-            alert_timestamp_local = alert_timestamp_utc.astimezone(LOCAL_TZ).strftime('%Y-%m-%d %H:%M:%S')
-            
-            # Infer category and priority (simplified for now, can be enhanced with more tools)
-            category = "Unknown"
-            priority = "P3" # Default to P3 (Medium)
-            if "cpu" in alert.get("metric", "").lower() or "memory" in alert.get("metric", "").lower():
-                category = "Performance"
-            elif "down" in alert.get("title", "").lower() or "unavailable" in alert.get("title", "").lower():
-                category = "Availability"
-            
-            if alert.get("severity", "").lower() == "critical":
-                priority = "P1"
-            elif alert.get("severity", "").lower() == "high":
-                priority = "P2"
-            elif alert.get("severity", "").lower() == "warning":
-                priority = "P3"
-            else:
-                priority = "P4" # Low
-            
-            # Infer suspected root cause and problem ID (simplified for now)
-            suspected_root_cause = pattern_analysis.get("resolution_patterns", "No clear pattern identified.")
-            problem_id = pattern_analysis.get("problem_id", "N/A") # Assuming problem_id might come from pattern analysis
-
-            # Enhanced reason with pattern analysis
-            enhanced_reason = (f"{escalation_result['reason']}\n" 
-                             f"Pattern Analysis: {pattern_analysis.get('total_matches', 0)} similar alerts found")
-
-            alert_detail = AlertDetail(
+            alert_summary.append(AlertDetail(
                 incident_number=int(alert.get('incident_number', 0)),
                 title=alert.get('title', 'Unknown'),
                 severity=alert.get('severity', 'Unknown').upper(),
@@ -278,287 +673,258 @@ def run(shift_type=None, shift_start=None, shift_end=None):
                 status=alert.get('status', 'Unknown'),
                 timestamp=alert_timestamp_local,
                 escalation_status=escalation_status,
-                escalation_reason=enhanced_reason if not was_resolved else 'Resolved within delay period',
-                category=category,
-                priority=priority,
-                suspected_root_cause=suspected_root_cause,
-                problem_id=problem_id
-            )
-            
-            if alert_detail.status.lower() in ["triggered", "acknowledged"]:
-                active_incidents.append(alert_detail)
-            elif alert_detail.status.lower() == "resolved":
-                resolved_incidents.append(alert_detail)
-
-    except Exception as e:
-        logger.error(f"Failed to process alerts with enhanced tools: {e}")
-        # Fallback to basic alert processing
-        overall_service_health_summary = "Overall Service Health: Unknown (Failed to retrieve system health)"
-        for alert in alerts:
-            try:
-                # Basic alert processing
-                policy_result_str = intelligent_escalation_policy.run(json.dumps(alert))
-                policy_result_dict = json.loads(policy_result_str)
-                eligible = policy_result_dict.get("eligible", False)
-                reason = policy_result_dict.get("reason", "")
-                was_resolved = check_resolution_status(alert, delay_minutes)
-                escalation_status = "Escalated" if eligible and not was_resolved else "Not Escalated"
-                
-                alert_timestamp_utc = datetime.fromisoformat(alert.get('timestamp', 'N/A').replace("Z", "+00:00")).replace(tzinfo=timezone.utc)
-                alert_timestamp_local = alert_timestamp_utc.astimezone(LOCAL_TZ).strftime('%Y-%m-%d %H:%M:%S')
-
-                # Infer category and priority for fallback
-                category = "Unknown"
-                priority = "P3"
-                if "cpu" in alert.get("metric", "").lower() or "memory" in alert.get("metric", "").lower():
-                    category = "Performance"
-                elif "down" in alert.get("title", "").lower() or "unavailable" in alert.get("title", "").lower():
-                    category = "Availability"
-                
-                if alert.get("severity", "").lower() == "critical":
-                    priority = "P1"
-                elif alert.get("severity", "").lower() == "high":
-                    priority = "P2"
-                elif alert.get("severity", "").lower() == "warning":
-                    priority = "P3"
-                else:
-                    priority = "P4"
-
-                alert_detail = AlertDetail(
-                    incident_number=int(alert.get('incident_number', 0)),
-                    title=alert.get('title', 'Unknown'),
-                    severity=alert.get('severity', 'Unknown').upper(),
-                    metric=alert.get('metric', 'Unknown'),
-                    status=alert.get('status', 'Unknown'),
-                    timestamp=alert_timestamp_local,
-                    escalation_status=escalation_status,
-                    escalation_reason=reason if not was_resolved else 'Resolved within delay period',
-                    category=category,
-                    priority=priority,
-                    suspected_root_cause="Fallback: Pattern analysis unavailable.",
-                    problem_id="N/A"
-                )
-                
-                if alert_detail.status.lower() in ["triggered", "acknowledged"]:
-                    active_incidents.append(alert_detail)
-                elif alert_detail.status.lower() == "resolved":
-                    resolved_incidents.append(alert_detail)
-
-            except Exception as inner_e:
-                logger.error(f"Failed to process alert {alert.get('incident_number')}: {inner_e}")
-
-    # Get enhanced alert trends and metrics
-    try:
-        trends_data = json.loads(get_alert_trends.run(hours=int((shift_end_utc - shift_start_utc).total_seconds() / 3600)))
-        alert_count = trends_data["total_alerts"]
-        severity_dist = trends_data["severity_distribution"]
-        critical_count = severity_dist.get("critical", 0)
-        warning_count = severity_dist.get("warning", 0)
-        resolved_count = sum(1 for a in alerts if a.get("status") == "resolved")
-        
-        # Use enhanced escalation eligibility check
-        escalated_count = sum(1 for a in alerts if 
-                             json.loads(intelligent_escalation_policy.run(json.dumps(a)))["eligible"] and 
-                             not check_resolution_status(a, delay_minutes))
-    except Exception as e:
-        logger.error(f"Failed to get enhanced metrics, falling back to basic counting: {e}")
-        # Fallback to basic counting
-        alert_count = len(alerts)
-        critical_count = sum(1 for a in alerts if a.get("severity") == "critical")
-        warning_count = sum(1 for a in alerts if a.get("severity") == "warning")
-        resolved_count = sum(1 for a in alerts if a.get("status") == "resolved")
-        escalated_count = sum(1 for a in alerts if 
-                             json.loads(intelligent_escalation_policy.run(json.dumps(a)))["eligible"] and 
-                             not check_resolution_status(a, delay_minutes))
-
-    # Format shift period for the agent
-    shift_start_local = shift_start.astimezone(LOCAL_TZ).strftime('%Y-%m-%d %H:%M:%S')
-    shift_end_local = shift_end.astimezone(LOCAL_TZ).strftime('%Y-%m-%d %H:%M:%S')
-
-    # Prepare the alert details string dynamically
-    # Convert Pydantic models to dictionaries for JSON serialization
-    active_incidents_dicts = [alert.model_dump() for alert in active_incidents]
-    active_incidents_data = json.dumps(active_incidents_dicts, indent=2) if active_incidents_dicts else 'No active incidents to handover.'
-
-    resolved_incidents_dicts = [alert.model_dump() for alert in resolved_incidents]
-    resolved_incidents_data = json.dumps(resolved_incidents_dicts, indent=2) if resolved_incidents_dicts else 'No incidents resolved during this shift.'
-
-    # Define the task for the reporter agent using the YAML template
+                escalation_reason=reason if not was_resolved else 'Resolved within delay period'
+            ))
+        except Exception as e:
+            logger.error(f"Failed to process alert {alert.get('incident_number')}: {e}")
+    
+    # Calculate KPIs
+    shift_start_arrow = arrow.get(shift_start)
+    shift_end_arrow = arrow.get(shift_end)
+    
+    # Calculate metrics including escalations from escalation log
+    escalated_alerts = []
+    for alert in alerts:
+        is_escalated, reason = check_escalation_eligibility(alert)
+        if is_escalated:
+            escalated_alerts.append(alert)
+            logger.info(f"Found escalated alert {alert.get('incident_number')}: {reason}")
+    
+    # Calculate all metrics
+    shift_kpis = calculate_shift_kpis(alerts, shift_start_arrow, shift_end_arrow)
+    
+    # Determine report status based on actual escalation count from escalation log
+    critical_count = sum(1 for alert in alerts if alert.get('severity', '').lower() == 'critical')
+    escalated_count = len(escalated_alerts)
+    
+    if (critical_count >= ShiftConfig.CRITICAL_ALERT_THRESHOLD_RED or 
+        escalated_count >= ShiftConfig.ESCALATED_ALERT_THRESHOLD_RED):
+        report_status_emoji = "🔴"
+        report_status_text = "RED"
+    elif (critical_count >= ShiftConfig.CRITICAL_ALERT_THRESHOLD_AMBER or 
+          escalated_count >= ShiftConfig.ESCALATED_ALERT_THRESHOLD_AMBER):
+        report_status_emoji = "🟡"
+        report_status_text = "AMBER"
+    else:
+        report_status_emoji = "🟢"
+        report_status_text = "GREEN"
+    
+    logger.info(f"Report status: {report_status_text} (Critical: {critical_count}, Escalated: {escalated_count})")
+    
+    # Format data for task
+    shift_start_local = arrow.get(shift_start).to(LOCAL_TZ_NAME).format('YYYY-MM-DD HH:mm:ss')
+    shift_end_local = arrow.get(shift_end).to(LOCAL_TZ_NAME).format('YYYY-MM-DD HH:mm:ss')
+    report_date = arrow.get(shift_start).to(LOCAL_TZ_NAME).format('YYYY-MM-DD')
+    
+    alert_summary_dicts = [alert.model_dump() for alert in alert_summary]
+    alert_details_str = json.dumps(alert_summary_dicts, indent=2) if alert_summary_dicts else 'No alerts recorded.'
+    
+    active_incidents = [alert for alert in alert_summary if alert.status != 'resolved']
+    resolved_incidents = [alert for alert in alert_summary if alert.status == 'resolved']
+    
+    active_incidents_data = "\n".join([f"- {inc.title} (Severity: {inc.severity})" for inc in active_incidents]) or "No active incidents"
+    resolved_incidents_data = "\n".join([f"- {inc.title} (Severity: {inc.severity})" for inc in resolved_incidents]) or "No resolved incidents"
+    
+    # Create task
     report_task = Task(
         description=report_task_def["description"].format(
             shift_start=shift_start_local,
             shift_end=shift_end_local,
             shift_type=shift_type.capitalize(),
-            overall_service_health=overall_service_health_summary,
-            total_alerts=alert_count,
+            total_alerts=len(alerts),
+            unique_alerts=len(set(str(a.get('incident_number')) for a in alerts)),
             critical_alerts=critical_count,
-            warning_alerts=warning_count,
-            resolved_alerts=resolved_count,
+            warning_alerts=sum(1 for a in alerts if a.get('severity', '').lower() == 'warning'),
+            resolved_alerts=sum(1 for a in alerts if a.get('status', '').lower() == 'resolved'),
+            acknowledged_alerts=sum(1 for a in alerts if a.get('status', '').lower() in ['acknowledged', 'resolved']),
             escalated_alerts=escalated_count,
+            alert_details=alert_details_str,
+            report_status_text=report_status_text,
+            report_status_emoji=report_status_emoji,
             active_incidents_data=active_incidents_data,
-            resolved_incidents_data=resolved_incidents_data
+            resolved_incidents_data=resolved_incidents_data,
+            report_date=report_date,
+            mttr_acknowledge=shift_kpis.get('mean_time_to_acknowledge', 'N/A'),
+            mttr_resolve=shift_kpis.get('mean_time_to_resolve', 'N/A'),
+            mttr_first_response=shift_kpis.get('mean_time_to_first_response', 'N/A'),
+            escalation_rate=f"{(escalated_count / len(alerts) * 100):.1f}%" if alerts else "0.0%",
+            resolution_rate=f"{(sum(1 for a in alerts if a.get('status', '').lower() == 'resolved') / len(alerts) * 100):.1f}%" if alerts else "0.0%",
+            acknowledgment_rate=f"{(sum(1 for a in alerts if a.get('status', '').lower() in ['acknowledged', 'resolved']) / len(alerts) * 100):.1f}%" if alerts else "0.0%",
+            sla_compliance=shift_kpis.get('sla_compliance_percentage', 'N/A'),
+            sla_breaches=shift_kpis.get('sla_breaches', 0)
         ),
         expected_output=report_task_def["expected_output"],
         agent=reporter_agent,
         output_pydantic=ShiftReportOutput
     )
-
+    
+    # Run crew
     crew = Crew(
         agents=[reporter_agent],
         tasks=[report_task],
         verbose=True
     )
-
+    
     try:
         logger.info("Kicking off AI crew for shift report")
         result = crew.kickoff()
         
-        # Debug logging
-        logger.info(f"Crew result type: {type(result)}")
-        logger.info(f"Crew result attributes: {[attr for attr in dir(result) if not attr.startswith('_')]}")
+        output = extract_report_output(result, logger)
         
-        # Extract the structured output using Pydantic
-        try:
-            subject = None
-            body = None
-            
-            # Try to get Pydantic output first (preferred)
-            if hasattr(result, 'pydantic') and result.pydantic:
-                logger.info("Using Pydantic structured output")
-                report_data = result.pydantic
-                subject = report_data.subject
-                body = report_data.body
-                logger.info(f"Pydantic output - Subject: {subject[:50]}...")
-                logger.info(f"Pydantic output - Body length: {len(body)}")
-                
-            # Fallback to JSON dict output
-            elif hasattr(result, 'json_dict') and result.json_dict:
-                logger.info("Using JSON dict output")
-                subject = result.json_dict.get("subject")
-                body = result.json_dict.get("body")
-                logger.info(f"JSON dict output - Subject: {subject[:50] if subject else 'None'}...")
-                logger.info(f"JSON dict output - Body length: {len(body) if body else 0}")
-                
-            # Last resort: try to parse raw output
-            elif hasattr(result, 'raw') and result.raw:
-                logger.info("Attempting to parse raw output")
-                raw_output = result.raw.strip()
-                logger.info(f"Raw output preview: {raw_output[:200]}...")
-                
-                # Try to find JSON in the raw output
-                import re
-                json_match = re.search(r'\{.*\}', raw_output, re.DOTALL)
-                if json_match:
-                    json_string = json_match.group()
-                    try:
-                        parsed_data = json.loads(json_string)
-                        subject = parsed_data.get("subject")
-                        body = parsed_data.get("body")
-                        logger.info("Successfully parsed JSON from raw output")
-                    except json.JSONDecodeError as e:
-                        logger.error(f"Failed to parse JSON from raw output: {e}")
-                        
-            # Validate that we have both subject and body
-            if not subject or not body:
-                raise ValueError(f"Missing required fields - Subject: {'✓' if subject else '✗'}, Body: {'✓' if body else '✗'}")
-                
-        except Exception as e:
-            logger.error(f"Failed to extract structured output: {e}")
-            
-            # Fallback: Generate a basic report
-            subject = f"📊 NOC {shift_type.capitalize()} Shift Report ({shift_start_local} - {shift_end_local} +08)"
-            body = (
-                f"Dear NOC Team,\n\n"
-                f"This is the {shift_type} shift report for the period {shift_start_local} to {shift_end_local} (+08).\n\n"
-                f"SHIFT SUMMARY:\n"
-                f"- Total Alerts: {alert_count}\n"
-                f"- Critical Alerts: {critical_count}\n"
-                f"- Warning Alerts: {warning_count}\n"
-                f"- Resolved Alerts: {resolved_count}\n"
-                f"- Escalated Alerts: {escalated_count}\n\n"
-            )
-            
-            if active_incidents or resolved_incidents:
-                body += "ACTIVE INCIDENTS TO HANDOVER:\n"
-                if active_incidents:
-                    for alert in active_incidents:
-                        body += (
-                            f"- Incident: {alert.incident_number}\n"
-                            f"  Title: {alert.title}\n"
-                            f"  Severity: {alert.severity}\n"
-                            f"  Status: {alert.status}\n"
-                            f"  Timestamp: {alert.timestamp}\n"
-                            f"  Escalation: {alert.escalation_status}\n"
-                            f"  Reason: {alert.escalation_reason}\n"
-                            f"  Category: {alert.category}\n"
-                            f"  Priority: {alert.priority}\n"
-                            f"  Suspected Root Cause: {alert.suspected_root_cause}\n"
-                            f"  Problem ID: {alert.problem_id}\n\n"
-                        )
-                else:
-                    body += "No active incidents to handover.\n\n"
-
-                body += "RESOLVED INCIDENTS DURING SHIFT:\n"
-                if resolved_incidents:
-                    for alert in resolved_incidents:
-                        body += (
-                            f"- Incident: {alert.incident_number}\n"
-                            f"  Title: {alert.title}\n"
-                            f"  Severity: {alert.severity}\n"
-                            f"  Status: {alert.status}\n"
-                            f"  Timestamp: {alert.timestamp}\n"
-                            f"  Escalation: {alert.escalation_status}\n"
-                            f"  Reason: {alert.escalation_reason}\n"
-                            f"  Category: {alert.category}\n"
-                            f"  Priority: {alert.priority}\n"
-                            f"  Suspected Root Cause: {alert.suspected_root_cause}\n"
-                            f"  Problem ID: {alert.problem_id}\n\n"
-                        )
-                else:
-                    body += "No incidents resolved during this shift.\n\n"
-            else:
-                body += "No alerts were recorded during this shift period.\n\n"
-                
-            body += (
-                f"Overall Service Health: {overall_service_health}\n\n"
-                f"Please review any unresolved incidents and contact the managed service team for any issues or concerns.\n\n"
-                f"Best regards,\n"
-                f"CrewAI Shift Reporting System"
-            )
-            
-            logger.warning("Using fallback report due to structured output extraction failure")
-
-        # Send the email and Rocket.Chat webhook message
-        send_report_email(subject, body)
-        logger.info("Shift report emailed to NOC team and sent to Rocket.Chat webhook successfully")
+        if not output.subject or not output.body:
+            logger.warning("Invalid output, using fallback")
+            output.subject = f"{report_status_emoji} NOC {shift_type.capitalize()} Shift Report | {report_date}"
+            output.body = f"Shift report for {shift_start_local} to {shift_end_local}\n\nProcessed {len(alerts)} alerts."
         
-        # Log success details
-        logger.info(f"Report sent - Subject: {subject}")
-        logger.info(f"Report sent - Body length: {len(body)} characters")
+        # Send notifications
+        send_report_email(output.subject, output.body, output.metadata)
+        send_rocketchat_webhook_message(f"**{output.subject}**\n\n{output.body[:500]}...")
+        
+        logger.info("Shift report sent successfully")
+        logger.info(f"Subject: {output.subject}")
+        logger.info(f"Body length: {len(output.body)} characters")
         
     except Exception as e:
-        logger.error(f"Report generation or notification failed: {e}")
+        logger.error(f"Report generation failed: {e}", exc_info=True)
         raise
+
 
 def run_weekly_report():
     """Run the weekly report task."""
-    now = datetime.now(LOCAL_TZ)
+    now = arrow.now(LOCAL_TZ_NAME)
     # Go back to the last Monday
-    start_of_last_week = now - timedelta(days=now.weekday() + 7)
-    end_of_last_week = start_of_last_week + timedelta(days=6)
+    start_of_last_week = now.shift(days=-(now.weekday() + 7))
+    end_of_last_week = start_of_last_week.shift(days=6)
 
-    shift_start = start_of_last_week.replace(hour=0, minute=0, second=0, microsecond=0)
-    shift_end = end_of_last_week.replace(hour=23, minute=59, second=59, microsecond=0)
+    shift_start = start_of_last_week.replace(hour=0, minute=0, second=0, microsecond=0).datetime
+    shift_end = end_of_last_week.replace(hour=23, minute=59, second=59, microsecond=0).datetime
 
     run(shift_type="weekly", shift_start=shift_start, shift_end=shift_end)
 
+
 if __name__ == "__main__":
     import argparse
-    parser = argparse.ArgumentParser()
+    
+    parser = argparse.ArgumentParser(description='Generate NOC shift reports')
     parser.add_argument("--shift", choices=["morning", "evening", "weekly"], 
                        help="Shift type to generate report for")
+    parser.add_argument("--test", action="store_true",
+                       help="Run timestamp parsing tests")
     args = parser.parse_args()
-    if args.shift == "weekly":
-        run_weekly_report()
+    
+    if args.test:
+        # Run tests
+        print("Testing timestamp parsing:")
+        print("=" * 60)
+        
+        test_timestamps = [
+            "2025-10-21T00:42:01Z",
+            "2025-10-17T03:43:15Z",
+            "2025-10-14T06:13:28Z"
+        ]
+        
+        for ts in test_timestamps:
+            try:
+                parsed = parse_ts_utc(ts)
+                print(f"✓ {ts}")
+                print(f"  UTC:   {parsed.format('YYYY-MM-DD HH:mm:ss ZZ')}")
+                print(f"  Local: {to_local_str(parsed)}")
+            except Exception as e:
+                print(f"✗ {ts} -> Error: {e}")
+        
+        print("\n" + "=" * 60)
+        print("Testing alert filtering:")
+        print("=" * 60)
+        
+        # Test morning shift
+        now = arrow.now(LOCAL_TZ_NAME)
+        shift_start_local = now.replace(hour=7, minute=0, second=0, microsecond=0)
+        shift_end_local = now.replace(hour=16, minute=0, second=0, microsecond=0)
+        
+        print(f"Current time: {now.format('YYYY-MM-DD HH:mm:ss ZZ')}")
+        print(f"Morning shift window (Local): {shift_start_local.format('YYYY-MM-DD HH:mm:ss ZZ')} to {shift_end_local.format('YYYY-MM-DD HH:mm:ss ZZ')}")
+        print(f"Morning shift window (UTC):   {shift_start_local.to('UTC').format('YYYY-MM-DD HH:mm:ss ZZ')} to {shift_end_local.to('UTC').format('YYYY-MM-DD HH:mm:ss ZZ')}")
+        
+        # Load and filter alerts
+        alerts = load_alerts(shift_start_local.datetime, shift_end_local.datetime)
+        
+        if alerts:
+            print(f"\nFound {len(alerts)} alerts in morning shift window:")
+            print("-" * 60)
+            for alert in alerts[:5]:  # Show first 5
+                try:
+                    ts = parse_ts_utc(alert.get('timestamp'))
+                    print(f"  Incident {alert.get('incident_number')}: {alert.get('title')[:50]}")
+                    print(f"    Time: {to_local_str(ts)} (Status: {alert.get('status')})")
+                except:
+                    print(f"  Incident {alert.get('incident_number')}: Invalid timestamp")
+            if len(alerts) > 5:
+                print(f"  ... and {len(alerts) - 5} more")
+        else:
+            print("\nNo alerts found in morning shift window")
+            
+        # Test evening shift
+        print("\n" + "=" * 60)
+        shift_start_local = now.replace(hour=16, minute=0, second=0, microsecond=0)
+        shift_end_local = now.replace(hour=23, minute=0, second=0, microsecond=0)
+        
+        print(f"Evening shift window (Local): {shift_start_local.format('YYYY-MM-DD HH:mm:ss ZZ')} to {shift_end_local.format('YYYY-MM-DD HH:mm:ss ZZ')}")
+        print(f"Evening shift window (UTC):   {shift_start_local.to('UTC').format('YYYY-MM-DD HH:mm:ss ZZ')} to {shift_end_local.to('UTC').format('YYYY-MM-DD HH:mm:ss ZZ')}")
+        
+        alerts = load_alerts(shift_start_local.datetime, shift_end_local.datetime)
+        
+        if alerts:
+            print(f"\nFound {len(alerts)} alerts in evening shift window:")
+            print("-" * 60)
+            for alert in alerts[:5]:
+                try:
+                    ts = parse_ts_utc(alert.get('timestamp'))
+                    print(f"  Incident {alert.get('incident_number')}: {alert.get('title')[:50]}")
+                    print(f"    Time: {to_local_str(ts)} (Status: {alert.get('status')})")
+                except:
+                    print(f"  Incident {alert.get('incident_number')}: Invalid timestamp")
+            if len(alerts) > 5:
+                print(f"  ... and {len(alerts) - 5} more")
+        else:
+            print("\nNo alerts found in evening shift window")
+            
+        # Show all unique timestamps in the log for debugging
+        print("\n" + "=" * 60)
+        print("All unique alert timestamps in log (latest 20):")
+        print("=" * 60)
+        
+        all_alerts = _load_log_sync()
+        unique_times = {}
+        
+        for alert in all_alerts:
+            ts = alert.get('timestamp')
+            inc = alert.get('incident_number')
+            if ts:
+                try:
+                    parsed = parse_ts_utc(ts)
+                    time_key = parsed.format('YYYY-MM-DD HH:mm')
+                    if time_key not in unique_times:
+                        unique_times[time_key] = {
+                            'utc': parsed.format('YYYY-MM-DD HH:mm:ss ZZ'),
+                            'local': to_local_str(parsed),
+                            'incidents': []
+                        }
+                    unique_times[time_key]['incidents'].append(inc)
+                except:
+                    pass
+        
+        sorted_times = sorted(unique_times.items(), reverse=True)[:20]
+        for time_key, data in sorted_times:
+            print(f"  {data['local']} (UTC: {data['utc']})")
+            print(f"    Incidents: {', '.join(map(str, data['incidents'][:5]))}")
+        
+        print("\n" + "=" * 60)
+        print("Test completed!")
+        print("=" * 60)
+        
     else:
-        run(args.shift)
+        # Run actual report generation
+        if args.shift == "weekly":
+            run_weekly_report()
+        else:
+            run(args.shift)

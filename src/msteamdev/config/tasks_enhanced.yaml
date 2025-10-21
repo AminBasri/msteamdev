@@ -84,17 +84,32 @@ shift_report:
     SHIFT CONTEXT:
     - Period: {shift_start} to {shift_end} (+08)
     - Type: {shift_type}
-    - Timezone: Asia/Singapore
+    - Timezone: Asia/Kuala_Lumpur (MYT +08)
     - Operating Environment: Production NOC
 
-    PERFORMANCE METRICS:
+    PERFORMANCE METRICS (Shift-Specific):
     - Total Alerts: {total_alerts}
+    - Unique Incidents: {unique_alerts}
     - Critical Alerts: {critical_alerts}
     - Warning Alerts: {warning_alerts}
     - Resolved Alerts: {resolved_alerts}
+    - Acknowledged Alerts: {acknowledged_alerts}
     - Escalated Alerts: {escalated_alerts}
+    
+    KEY PERFORMANCE INDICATORS:
+    - Mean Time to Acknowledge (MTTA): {mttr_acknowledge}
+    - Mean Time to Resolve (MTTR): {mttr_resolve}
+    - Mean Time to First Response (MTTR): {mttr_first_response}
+    - Escalation Rate: {escalation_rate}
+    - Resolution Rate: {resolution_rate}
+    - Acknowledgment Rate: {acknowledgment_rate}
+    - SLA Compliance: {sla_compliance}
+    - SLA Breaches: {sla_breaches}
 
-    ACTIVE INCIDENTS (HANDOVER):
+    ALERT DETAILS (JSON format for structured parsing):
+    {alert_details}
+
+    ACTIVE INCIDENTS TO HANDOVER:
     {active_incidents_data}
 
     RESOLVED INCIDENTS (DURING SHIFT):
@@ -103,70 +118,201 @@ shift_report:
     REPORT STRUCTURE REQUIREMENTS:
 
     1. Enhanced Subject Line:
-       Format: "📊 NOC {shift_type} Shift Report ({shift_start} - {shift_end} +08)"
-       Include priority indicators for critical situations
+       REQUIRED FORMAT: "{report_status_emoji} NOC {shift_type} Shift Report | {report_date} | {total_alerts} Total | {resolved_alerts} Resolved | {escalated_alerts} Escalated"
+       
+       Status Emoji Guide:
+       - 🟢 GREEN: No critical alerts, <2 escalations
+       - 🟡 AMBER: 3-4 critical alerts OR 2-3 escalations
+       - 🔴 RED: ≥5 critical alerts OR ≥3 escalations
 
-    2. Enhanced Email Structure:
-       a) Professional Introduction:
-          - Formal greeting
-          - Shift period overview with timezone
-          - Executive summary of key events and overall service health.
+    2. Enhanced Email Body Structure:
+    
+       a) EXECUTIVE SUMMARY (First paragraph):
+          - Professional greeting: "Dear NOC Management Team,"
+          - Shift overview: "This report provides a comprehensive overview of the Production NOC {shift_type} shift operations for the period of {shift_start} to {shift_end} (+08) in the Asia/Kuala_Lumpur timezone."
+          - Overall Status: {report_status_text}
+          - Critical actions needed: 0-3 specific actionable items based on active critical/escalated alerts
+          - Shift performance assessment: "Meeting SLAs" / "Below SLAs" / "Exceeding SLAs"
+            * Meeting SLAs: Resolution rate >80%, SLA compliance >90%
+            * Below SLAs: Resolution rate <80% OR SLA compliance <90%
+            * Exceeding SLAs: Resolution rate >95%, SLA compliance >95%
 
-       b) Performance Analysis:
-          - Statistical breakdown of alerts by category and priority.
-          - Trend comparison with previous shifts (e.g., increase/decrease in critical alerts).
-          - Key performance indicators (e.g., mean time to acknowledge, mean time to resolve).
-          - Resolution efficiency metrics.
+       b) PERFORMANCE ANALYSIS:
+          Title: "**Performance Analysis:**"
+          
+          Content to include:
+          - Opening statement about shift stability/activity level
+          - Statistical breakdown by severity:
+            * Total Alerts (Shift-specific): {total_alerts}
+            * Unique Incidents: {unique_alerts}
+            * Critical Alerts: {critical_alerts}
+            * Warning Alerts: {warning_alerts}
+            * Resolved Alerts: {resolved_alerts}
+            * Escalated Alerts: {escalated_alerts}
+          
+          - Key Performance Indicators table:
+            ```
+            - Mean Time to Acknowledge (MTTA): {mttr_acknowledge}
+            - Mean Time to Resolve (MTTR): {mttr_resolve}
+            - Mean Time to First Response (MTTR): {mttr_first_response}
+            - Escalation Rate: {escalation_rate}
+            - Resolution Rate: {resolution_rate}
+            - Acknowledgment Rate: {acknowledgment_rate}
+            - SLA Compliance: {sla_compliance}
+            ```
+          
+          - Brief analysis of trends (if GetAlertTrends tool was used)
 
-       c) Active Incidents (Handover):
-          - For each active incident, provide:
-            - Incident Number, Title, Affected Service, Business Impact, Priority
-            - Current Status, Last Update, Suspected Root Cause/Known Problem ID (if available)
-            - Immediate Actions for Incoming Shift (clear, concise, actionable steps)
-          - Group by priority for clarity.
+       c) ACTIVE INCIDENTS (HANDOVER):
+          Title: "**Active Incidents (Handover):**"
+          
+          Parse the active_incidents_data provided above. If active incidents exist:
+          - Group by priority: P1 (Critical), P2 (High), P3 (Medium), P4 (Low)
+          - For each incident, extract from the JSON data and present as:
+            - Incident #[number]: [title]
+              * Severity: [severity level]
+              * Status: [current status]
+              * Timestamp: [formatted timestamp]
+              * Escalation: [escalation status]
+              * Reason: [escalation reason]
+              * Category: [category if available]
+              * Priority: [priority if available]
+              * Suspected Root Cause: [root cause if available]
+              * Problem ID: [problem ID if available]
+              * Immediate Actions: [Derive 1-2 specific actions based on alert context]
+          
+          If no active incidents or active_incidents_data shows "No active incidents":
+          - State: "No active incidents to hand over to the incoming shift."
 
-       d) Resolved Incidents (During Shift):
-          - For each resolved incident, provide:
-            - Incident Number, Title, Affected Service, Business Impact, Priority
-            - Resolution Steps, Time to Resolve, Verification
-          - Group by priority for clarity.
+       d) RESOLVED INCIDENTS (DURING SHIFT):
+          Title: "**Resolved Incidents (During Shift):**"
+          
+          Parse the resolved_incidents_data provided above. If resolved incidents exist:
+          - Group by priority
+          - For each resolved incident, extract from the JSON data and present as:
+            - Incident #[number]: [title]
+              * Severity: [severity level]
+              * Status: [current status]
+              * Timestamp: [formatted timestamp]
+              * Time to Resolve: [Calculate from alert_details JSON if timestamps available]
+              * Resolution verified: Yes (status is resolved)
+          
+          If no resolved incidents or resolved_incidents_data shows "No resolved incidents":
+          - State: "No incidents were resolved during this shift."
 
-       e) Risk Assessment (ITIL Problem Management & CSI):
-          - Emerging Alert Patterns/Anomalies Detected (from GetAlertTrends tool).
-          - Potential emerging issues (flagged as potential problems).
-          - Recommendations for proactive monitoring and proactive measures (e.g., alert tuning, automation opportunities).
-          - Areas needing attention and suggestions for improvement (CSI).
+       e) RISK ASSESSMENT (ITIL Problem Management & CSI):
+          Title: "**Risk Assessment (ITIL Problem Management & CSI):**"
+          
+          Use GetAlertTrends tool if available to analyze:
+          - Emerging Alert Patterns/Anomalies:
+            * Look for repeated alerts on same metric
+            * Identify hourly distribution patterns
+            * Note alert velocity trends
+          
+          - Potential emerging issues:
+            * Flag if same incident number has multiple triggers
+            * Identify patterns in unresolved incidents
+          
+          - Recommendations:
+            * Proactive monitoring suggestions based on alert patterns
+            * Alert tuning opportunities (if seeing noise)
+            * Automation opportunities (if manual interventions are repeated)
+          
+          - CSI Improvements:
+            * Process improvements based on MTTR/MTTA
+            * Knowledge base gaps identified
+            * Tool/integration improvements needed
 
-       f) Handover Information (ITIL Service Operation):
-          - Summary of ongoing critical situations with clear ownership and next steps.
-          - Required follow-up actions for the incoming shift.
-          - Special monitoring requirements (specific thresholds or conditions to watch for).
-          - Escalation thresholds to watch.
-          - Summary of recent changes (if available) and their impact (if any).
+       f) HANDOVER INFORMATION (ITIL Service Operation):
+          Title: "**Handover Information (ITIL Service Operation):**"
+          
+          - Summary of ongoing critical situations:
+            * List any P1/P2 active incidents
+            * Clear ownership assignment (incoming shift)
+            * Next steps for each critical incident
+          
+          - Required follow-up actions:
+            * Specific tasks for incoming shift (3-5 actionable items max)
+            * Priority order for follow-ups
+          
+          - Special monitoring requirements:
+            * Specific metrics/thresholds to watch (e.g., "Monitor network utilization on Synergi CORE Prod")
+            * Conditions that would require escalation
+          
+          - Escalation thresholds:
+            * When to escalate to management
+            * When to engage on-call resources
+          
+          - Recent changes impact:
+            * Note any deployments/changes during shift (if available in context)
+            * Impact assessment of changes
 
-       g) Professional Closing:
-          - Summary of key action items.
-          - Contact information for issues.
-          - Standard signature block.
+       g) DATA QUALITY INDICATORS:
+          Title: "**Data Quality Indicators:**"
+          
+          Note: ReportMetadata is auto-populated by the framework. Include these indicators:
+          - Report Generated: [Current timestamp in ISO format]
+          - Data Freshness: real-time (if tools worked) or fallback (if tools failed)
+          - Alerts Source: Unified Alerting System
+          - Completeness Score: 1.0 (if all data available) or 0.7 (if limited data)
+          - Known Limitations: List any data gaps or tool failures encountered
+          
+          Important: If you successfully used GetAlertTrends tool, 
+          note "Data freshness: real-time". If tools failed, note the limitations.
 
-    3. Enhanced Formatting Requirements:
-       - Proper section spacing using 
+       h) PROFESSIONAL CLOSING:
+          - Summary of key action items (2-3 bullets max)
+          - Contact information: "Please review any unresolved incidents and contact the managed service team for any issues or concerns."
+          - Signature block (EXACTLY as shown):
+            ```
+            Best regards,
+            CrewAI Shift Reporting System
+            Managed Service Team
+            ```
 
-       - Consistent bullet point formatting.
-       - Clear section headers.
-       - Professional tone throughout.
-       - Proper timestamp formatting in +08.
-       - Structured layout for readability.
+    3. FORMATTING REQUIREMENTS:
+       - Use proper line breaks between sections (double newline)
+       - Section headers in **bold** using **Header:**
+       - Bullet points with consistent indentation (2 spaces for sub-bullets)
+       - Timestamp format: YYYY-MM-DD HH:MM:SS (in +08 timezone)
+       - Keep professional tone throughout
+       - No markdown headers (no # symbols), use **bold** for emphasis only
+       - Keep total email length reasonable (aim for 300-500 lines max)
 
-    4. Signature Block:
-       "Best regards,
-       CrewAI Shift Reporting System
-       Managed Service Team"
+    4. IMPORTANT NOTES:
+       - The alert_details JSON contains the raw alert data for your analysis
+       - Parse this JSON to extract specific incident information
+       - Use GetAlertTrends to enrich your analysis with alert patterns
+       - If tools return errors, acknowledge limitations in Data Quality Indicators
+       - Focus on actionable insights, not just data regurgitation
+       - Maintain ITIL terminology (Incident, Problem, Change, Service)
+       - Prioritize clarity and usefulness for the incoming shift team
 
   expected_output: >
-    A professional and comprehensive shift report formatted as a ShiftReportOutput object with:
-    - subject: Clear and informative email subject line with proper indicators
-    - body: Well-structured email body with all required sections, ITIL-aligned content, and proper formatting
+    A ShiftReportOutput Pydantic object containing:
+    
+    1. subject (str): 
+       - MUST follow exact format: "{emoji} NOC {Shift Type} Shift Report | {Date} | {Total} Total | {Resolved} Resolved | {Escalated} Escalated"
+       - Example: "🟢 NOC Morning Shift Report | 2025-10-21 | 1 Total | 1 Resolved | 0 Escalated"
+    
+    2. body (str): 
+       - Complete email body with all sections as specified
+       - Proper formatting with line breaks and structure
+       - Professional tone throughout
+       - MUST end with the exact signature block:
+         "Best regards,
+         CrewAI Shift Reporting System
+         Managed Service Team"
+    
+    3. metadata (ReportMetadata): 
+       - Auto-populated by the framework based on:
+         * generation_timestamp: Current UTC timestamp
+         * alert_count: Number of alerts processed
+         * critical_alerts: Count of critical severity alerts
+         * sla_breaches: Count of incidents exceeding SLA
+         * mttr_minutes: Mean time to resolution in minutes
+       - You don't need to manually create this; it's injected by the reporting system
+
   agent: reporter
   context: []
   output_pydantic: src.msteamdev.models.ShiftReportOutput

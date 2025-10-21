@@ -27,7 +27,8 @@ dependencies = [
     "pytest",
     "pytest-asyncio",
     "plotly",
-    "langchain-google-genai"
+    "langchain-google-genai",
+    "arrow"
 ]
 
 [project.scripts]

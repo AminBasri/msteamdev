@@ -603,8 +603,15 @@ async def receive_alert(request: Request):
                         webhook_logger.error(f"Failed to send resolve request to Otobo for ticket {otobo_ticket_id}: {e}")
                 # Continue processing for logging purposes
             
-            # Get timestamp from appropriate field
-            occurred_at = data.get("created_at") or data.get("occurred_at") or payload.get("event", {}).get("occurred_at", "unknown")
+            # Get timestamp from appropriate field.
+            # Use the event-level occurred_at first (this reflects when the webhook event happened,
+            # e.g. acknowledged or resolved), then fall back to any incident-level timestamps.
+            occurred_at = (
+                payload.get("event", {}).get("occurred_at")
+                or data.get("occurred_at")
+                or data.get("created_at")
+                or "unknown"
+            )
 
             if occurred_at != "unknown" and not validate_timestamp(occurred_at):
                 raise ValueError("Invalid timestamp format")
