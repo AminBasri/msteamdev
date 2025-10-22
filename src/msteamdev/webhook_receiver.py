@@ -35,6 +35,10 @@ from msteamdev.logging_setup import get_module_logger
 
 webhook_logger = get_module_logger("webhook_receiver", log_filename="webhook_receiver.log", level=logging.INFO)
 
+# Log startup to verify logging is working
+webhook_logger.info("Webhook Server module loaded")
+webhook_logger.info("Logging configured for webhook_receiver.log")
+
 def ensure_knowledge_folder():
     """Ensure CrewAI knowledge folder structure exists"""
     try:
@@ -779,6 +783,8 @@ def health_check():
         "knowledge_folder": CREWAI_KNOWLEDGE_BASE
     })
 
+'''
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=7005, log_level="info")
+'''

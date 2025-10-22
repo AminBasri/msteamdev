@@ -19,7 +19,8 @@ from msteamdev.logging_setup import get_module_logger
 logger = get_module_logger('mcp_server', log_filename='mcp_server.log', level=logging.INFO)
 
 # Log startup to verify logging is working
-logger.info("MCP Server module loaded - logging configured")
+logger.info("MCP Server module loaded")
+logger.info("Logging configured for mcp_server.log")
 
 class IncidentRequest(BaseModel):
     incident_number: str
@@ -397,6 +398,7 @@ async def call_acknowledge_incident(req_id, args):
                 "error": {"code": -32603, "message": f"Failed to acknowledge incident: {str(e)}"}
             }
 
+'''
 if __name__ == "__main__":
     import uvicorn
     # Add startup logging to verify our logger is working
@@ -411,3 +413,4 @@ if __name__ == "__main__":
         log_level="info",
         log_config=None  # Disable uvicorn's default logging config
     )
+'''
