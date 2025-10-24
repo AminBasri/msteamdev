@@ -557,8 +557,10 @@ def calculate_shift_kpis(alerts: List[dict], shift_start: arrow.arrow.Arrow, shi
     mean_time_to_acknowledge = f"{sum(tta_values) / len(tta_values):.1f}m" if tta_values else "N/A"
     mean_time_to_first_response = f"{sum(ttfr_values) / len(ttfr_values):.1f}m" if ttfr_values else "N/A"
     
-    # SLA metrics (30 minute response SLA)
-    sla_threshold = 30
+    # SLA metrics - configurable response SLA threshold
+    # For auto-acknowledgment workflows: SLA should be based on acknowledgment time, not escalation time
+    # Default: 3 minutes (typical auto-acknowledgment delay) or configurable via environment
+    sla_threshold = int(os.getenv("SLA_THRESHOLD_MINUTES", "3"))
     sla_breaches = sum(1 for t in ttfr_values if t > sla_threshold)
     total_with_sla = len(ttfr_values)
     sla_compliance = f"{((total_with_sla - sla_breaches) / total_with_sla * 100):.1f}%" if total_with_sla > 0 else "N/A"
@@ -586,7 +588,8 @@ def calculate_shift_kpis(alerts: List[dict], shift_start: arrow.arrow.Arrow, shi
         "mean_time_to_first_response": mean_time_to_first_response,
         "sla_breaches": sla_breaches,
         "sla_compliance": sla_compliance,
-        "sla_compliance_percentage": sla_compliance
+        "sla_compliance_percentage": sla_compliance,
+        "sla_threshold": sla_threshold
     }
 
 
@@ -882,7 +885,8 @@ def run(shift_type: Optional[str] = None, shift_start: Optional[datetime] = None
             resolution_rate=f"{(sum(1 for a in alerts if a.get('status', '').lower() == 'resolved') / len(alerts) * 100):.1f}%" if alerts else "0.0%",
             acknowledgment_rate=f"{(sum(1 for a in alerts if a.get('status', '').lower() in ['acknowledged', 'resolved']) / len(alerts) * 100):.1f}%" if alerts else "0.0%",
             sla_compliance=shift_kpis.get('sla_compliance_percentage', 'N/A'),
-            sla_breaches=shift_kpis.get('sla_breaches', 0)
+            sla_breaches=shift_kpis.get('sla_breaches', 0),
+            sla_threshold=shift_kpis.get('sla_threshold', 'N/A')
         ),
         expected_output=report_task_def["expected_output"],
         agent=reporter_agent,

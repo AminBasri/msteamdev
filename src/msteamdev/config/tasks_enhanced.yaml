@@ -105,6 +105,7 @@ shift_report:
     - Acknowledgment Rate: {acknowledgment_rate}
     - SLA Compliance: {sla_compliance}
     - SLA Breaches: {sla_breaches}
+    - SLA Threshold: {sla_threshold}
 
     ALERT DETAILS (JSON format for structured parsing):
     {alert_details}
@@ -133,7 +134,7 @@ shift_report:
           - Overall Status: {report_status_text}
           - Critical actions needed: 0-3 specific actionable items based on active critical/escalated alerts
           - Shift performance assessment: "Meeting SLAs" / "Below SLAs" / "Exceeding SLAs"
-            * Meeting SLAs: Resolution rate >80%, SLA compliance >90%
+            * Meeting SLAs: Resolution rate >80%, SLA compliance >90% (first response within {sla_threshold} minutes)
             * Below SLAs: Resolution rate <80% OR SLA compliance <90%
             * Exceeding SLAs: Resolution rate >95%, SLA compliance >95%
 
@@ -159,6 +160,7 @@ shift_report:
             - Resolution Rate: {resolution_rate}
             - Acknowledgment Rate: {acknowledgment_rate}
             - SLA Compliance: {sla_compliance}
+            - SLA Threshold: {sla_threshold} minutes (time to first response)
             ```
           
           - Brief analysis of trends (if GetAlertTrends tool was used)
