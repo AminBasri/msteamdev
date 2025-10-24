@@ -4,6 +4,12 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
 from msteamdev.crew import start_alert_pipeline, get_user_email_from_pagerduty
 from msteamdev.tools.redis_client import cache_get, cache_set, cache_delete
+# NEW: Import persistent OTOBO ticket store
+from msteamdev.tools.otobo_ticket_store import (
+    save_otobo_ticket_mapping, 
+    get_otobo_ticket_mapping,
+    update_otobo_ticket_timestamp
+)
 import json
 import os
 import re
@@ -20,6 +26,9 @@ LOG_PATH = "src/msteamdev/alert_log.json"
 
 # Otobo server URL
 OTOBO_SERVER_URL = os.getenv("OTOBO_SERVER_URL", "http://localhost:7007")
+
+# UPDATED: OTOBO Ticket Cache TTL - Extended from 24 hours to 7 days
+OTOBO_TICKET_CACHE_TTL = int(os.getenv("OTOBO_TICKET_CACHE_TTL", "604800"))  # 7 days default
 
 # Configuration flags for filtering
 FILTER_ENABLED = True
@@ -38,6 +47,7 @@ webhook_logger = get_module_logger("webhook_receiver", log_filename="webhook_rec
 # Log startup to verify logging is working
 webhook_logger.info("Webhook Server module loaded")
 webhook_logger.info("Logging configured for webhook_receiver.log")
+webhook_logger.info(f"OTOBO ticket cache TTL set to {OTOBO_TICKET_CACHE_TTL} seconds ({OTOBO_TICKET_CACHE_TTL/86400:.1f} days)")
 
 def ensure_knowledge_folder():
     """Ensure CrewAI knowledge folder structure exists"""
@@ -206,12 +216,12 @@ def get_incident_details_from_mcp(incident_id: str) -> Optional[dict]:
             "name": "GetIncidentById",
             "arguments": {"incident_id": incident_id}
         },
-        "id": "webhook-receiver-1" # Static ID for this purpose
+        "id": "webhook-receiver-1"
     }
     try:
         webhook_logger.info(f"Calling MCP server for incident ID: {incident_id}")
-        response = requests.post(mcp_url, json=request_payload, timeout=10) # 10 second timeout
-        response.raise_for_status()  # Raise an exception for bad status codes
+        response = requests.post(mcp_url, json=request_payload, timeout=10)
+        response.raise_for_status()
         
         mcp_response = response.json()
         
@@ -224,7 +234,6 @@ def get_incident_details_from_mcp(incident_id: str) -> Optional[dict]:
             webhook_logger.error("MCP response is missing result content.")
             return None
             
-        # The actual incident data is a JSON string inside the 'text' field
         incident_details_str = result_content[0].get("text", "{}")
         incident_details = json.loads(incident_details_str)
         
@@ -279,39 +288,70 @@ def save_knowledge_base(knowledge_base: dict):
     except Exception as e:
         webhook_logger.error(f"Error saving knowledge base: {e}")
 
+# UPDATED: Enhanced OTOBO ticket creation with persistent storage fallback
 async def create_otobo_ticket_with_lock(incident_number: str, alert: dict) -> Optional[str]:
     """
-    Creates an Otobo ticket with a Redis distributed lock to prevent race conditions.
+    Creates an Otobo ticket with Redis distributed lock AND persistent storage fallback.
     Returns the ticket ID if created or found, otherwise None.
+    
+    UPDATED: Extended cache TTL to 7 days and added persistent storage fallback.
     """
     lock_key = f"otobo_create_lock:{incident_number}"
     ticket_cache_key = f"otobo_ticket:{incident_number}"
     
     # Try to acquire a lock with a 10-second expiry
-    # nx=True means set the key only if it does not already exist
     lock_acquired = cache_set(lock_key, "1", nx=True, ex=10)
     
     if not lock_acquired:
-        webhook_logger.info(f"Lock not acquired for incident {incident_number}. Waiting for existing ticket.")
-        # Another process is creating, wait and retrieve
-        time.sleep(0.5) # Small delay to allow other process to complete
+        webhook_logger.info(f"Lock not acquired for incident {incident_number}. Checking existing ticket.")
+        time.sleep(0.5)
+        
+        # Check Redis cache first
         existing_ticket_id = cache_get(ticket_cache_key)
         if existing_ticket_id:
-            webhook_logger.info(f"Retrieved existing Otobo ticket {existing_ticket_id} for incident {incident_number}.")
-            return existing_ticket_id
-        else:
-            webhook_logger.warning(f"Lock not acquired and no existing ticket found after waiting for incident {incident_number}. This might indicate a failed previous attempt or a very tight race.")
-            return None # Indicate that ticket was not created by this attempt
-    
-    try:
-        # Double-check after acquiring lock, in case it was created between initial check and lock acquisition
-        existing_ticket_id = cache_get(ticket_cache_key)
-        if existing_ticket_id:
-            webhook_logger.info(f"Otobo ticket {existing_ticket_id} found after acquiring lock for incident {incident_number}. Skipping creation.")
+            webhook_logger.info(f"Retrieved existing Otobo ticket {existing_ticket_id} from Redis for incident {incident_number}.")
             return existing_ticket_id
         
-        # Create ticket
-        create_payload = {"title": alert["title"], "body": json.dumps(alert, indent=2), "subject": f"Incident {incident_number}: {alert['title']}"}
+        # UPDATED: Fallback to persistent storage if Redis cache miss
+        webhook_logger.info(f"OTOBO ticket not in Redis, checking persistent storage for incident {incident_number}")
+        mapping = get_otobo_ticket_mapping(incident_number)
+        if mapping:
+            ticket_id = mapping["ticket_id"]
+            webhook_logger.info(f"Retrieved existing Otobo ticket {ticket_id} from persistent storage for incident {incident_number}.")
+            # Refresh Redis cache
+            cache_set(ticket_cache_key, ticket_id, ttl_seconds=OTOBO_TICKET_CACHE_TTL)
+            if mapping.get("ticket_number"):
+                cache_set(f"otobo_ticket_number:{incident_number}", mapping["ticket_number"], ttl_seconds=OTOBO_TICKET_CACHE_TTL)
+            return ticket_id
+        
+        webhook_logger.warning(f"Lock not acquired and no existing ticket found (Redis or persistent) for incident {incident_number}.")
+        return None
+    
+    try:
+        # Double-check after acquiring lock - check Redis first
+        existing_ticket_id = cache_get(ticket_cache_key)
+        if existing_ticket_id:
+            webhook_logger.info(f"Otobo ticket {existing_ticket_id} found in Redis after acquiring lock for incident {incident_number}.")
+            return existing_ticket_id
+        
+        # UPDATED: Check persistent storage before creating new ticket
+        webhook_logger.info(f"Checking persistent storage before creating new ticket for incident {incident_number}")
+        mapping = get_otobo_ticket_mapping(incident_number)
+        if mapping:
+            ticket_id = mapping["ticket_id"]
+            webhook_logger.info(f"Otobo ticket {ticket_id} found in persistent storage after acquiring lock for incident {incident_number}.")
+            # Refresh Redis cache
+            cache_set(ticket_cache_key, ticket_id, ttl_seconds=OTOBO_TICKET_CACHE_TTL)
+            if mapping.get("ticket_number"):
+                cache_set(f"otobo_ticket_number:{incident_number}", mapping["ticket_number"], ttl_seconds=OTOBO_TICKET_CACHE_TTL)
+            return ticket_id
+        
+        # Create new ticket
+        create_payload = {
+            "title": alert["title"], 
+            "body": json.dumps(alert, indent=2), 
+            "subject": f"Incident {incident_number}: {alert['title']}"
+        }
         response = requests.post(f"{OTOBO_SERVER_URL}/create_ticket", json=create_payload, timeout=10)
         response.raise_for_status()
         ticket_data = response.json().get("ticket_data", {})
@@ -319,10 +359,16 @@ async def create_otobo_ticket_with_lock(incident_number: str, alert: dict) -> Op
         if ticket_data and "TicketID" in ticket_data:
             ticket_id = ticket_data["TicketID"]
             ticket_number = ticket_data.get("TicketNumber")
-            cache_set(ticket_cache_key, ticket_id, ttl_seconds=86400)  # Cache for 24 hours
+            
+            # UPDATED: Store in Redis with extended TTL (7 days)
+            cache_set(ticket_cache_key, ticket_id, ttl_seconds=OTOBO_TICKET_CACHE_TTL)
             if ticket_number:
-                cache_set(f"otobo_ticket_number:{incident_number}", ticket_number, ttl_seconds=86400)  # Cache TicketNumber
-            webhook_logger.info(f"Created Otobo ticket {ticket_id} (Number: {ticket_number}) for incident {incident_number}")
+                cache_set(f"otobo_ticket_number:{incident_number}", ticket_number, ttl_seconds=OTOBO_TICKET_CACHE_TTL)
+            
+            # UPDATED: Store in persistent file (permanent)
+            save_otobo_ticket_mapping(incident_number, ticket_id, ticket_number)
+            
+            webhook_logger.info(f"Created Otobo ticket {ticket_id} (Number: {ticket_number}) for incident {incident_number} [Cached: {OTOBO_TICKET_CACHE_TTL}s, Persisted: YES]")
             return ticket_id
         else:
             webhook_logger.error(f"Otobo ticket creation failed for incident {incident_number}: No TicketID in response.")
@@ -332,7 +378,6 @@ async def create_otobo_ticket_with_lock(incident_number: str, alert: dict) -> Op
         webhook_logger.error(f"Failed to create Otobo ticket for incident {incident_number} with lock: {e}")
         return None
     finally:
-        # Ensure the lock is released
         cache_delete(lock_key)
 
 async def store_incident_knowledge(incident_number: str, knowledge_updates: List[dict], incident_info: dict, note_content: str = None):
@@ -356,7 +401,7 @@ async def store_incident_knowledge(incident_number: str, knowledge_updates: List
                 "knowledge_updates": [],
                 "summary": {}
             }
-        else: # If incident exists, update the status
+        else:
             knowledge_base[incident_number]["status"] = incident_info.get("status", knowledge_base[incident_number]["status"])
 
         # Add the raw note if provided
@@ -460,13 +505,9 @@ def detect_webhook_version_and_extract(payload: dict) -> tuple:
         # For incident.annotated events - extract note and incident info
         if event_type == "incident.annotated":
             data = event.get("data", {})
-            note_content = data.get("content", "")  # Direct content field
-            incident_info = data.get("incident", {})  # Incident reference
+            note_content = data.get("content", "")
+            incident_info = data.get("incident", {})
             incident_id = incident_info.get("id", "")
-            
-            # Extract incident number from summary if available
-            summary = incident_info.get("summary", "")
-            incident_number = "unknown"
             
             return ("v3", event_type, incident_info, note_content, incident_id)
         
@@ -510,12 +551,12 @@ async def receive_alert(request: Request):
         webhook_version, event_type, data, note_content, incident_id = detect_webhook_version_and_extract(payload)
         webhook_logger.info(f"Detected webhook {webhook_version}, event: {event_type}")
 
-        # Handle annotation events for knowledge extraction (NEW FEATURE)
+        # Handle annotation events for knowledge extraction
         if event_type == "incident.annotated" and note_content:
             webhook_logger.info(f"Processing annotation for incident ID: {incident_id}")
             webhook_logger.info(f"Note content: {note_content}")
 
-            # New: Get full incident details from MCP server
+            # Get full incident details from MCP server
             incident_details = get_incident_details_from_mcp(incident_id)
 
             if not incident_details:
@@ -528,11 +569,22 @@ async def receive_alert(request: Request):
             incident_number = str(incident_details.get("incident_number", incident_id))
             webhook_logger.info(f"Resolved incident ID {incident_id} to number {incident_number}")
 
-            # OTOBO INTEGRATION: Update Otobo ticket if it exists
+            # UPDATED: OTOBO Integration with persistent storage fallback
+            # Try Redis cache first
             otobo_ticket_id = cache_get(f"otobo_ticket:{incident_number}")
+            
+            # UPDATED: Fallback to persistent storage if cache miss
+            if not otobo_ticket_id:
+                webhook_logger.info(f"OTOBO ticket not in Redis, checking persistent storage for incident {incident_number}")
+                mapping = get_otobo_ticket_mapping(incident_number)
+                if mapping:
+                    otobo_ticket_id = mapping["ticket_id"]
+                    # Refresh Redis cache
+                    cache_set(f"otobo_ticket:{incident_number}", otobo_ticket_id, ttl_seconds=OTOBO_TICKET_CACHE_TTL)
+                    webhook_logger.info(f"Retrieved Otobo ticket {otobo_ticket_id} from persistent storage for incident {incident_number}")
+            
             if otobo_ticket_id:
                 try:
-                    # Use the local otobo_server.py proxy endpoint
                     otobo_update_url = f"{OTOBO_SERVER_URL}/update_ticket"
                     update_payload = {
                         "ticket_id": str(otobo_ticket_id),
@@ -540,8 +592,12 @@ async def receive_alert(request: Request):
                         "subject": f"PagerDuty Note for Incident {incident_number}"
                     }
                     response = requests.post(otobo_update_url, json=update_payload, timeout=10)
-                    response.raise_for_status()  # Raise an exception for bad status codes
+                    response.raise_for_status()
                     webhook_logger.info(f"Sent update to Otobo for ticket {otobo_ticket_id}")
+                    
+                    # UPDATED: Update timestamp in persistent storage
+                    update_otobo_ticket_timestamp(incident_number)
+                    
                 except Exception as e:
                     webhook_logger.error(f"Failed to send update to Otobo for ticket {otobo_ticket_id}: {e}")
 
@@ -549,7 +605,6 @@ async def receive_alert(request: Request):
             knowledge_updates = parse_knowledge_from_note(note_content)
 
             if knowledge_updates:
-                # Use the correct details from the MCP call
                 incident_info = {
                     "incident_id": incident_id,
                     "incident_number": incident_number,
@@ -561,7 +616,6 @@ async def receive_alert(request: Request):
                     "from_email": payload["event"].get("agent", {}).get("summary", "")
                 }
 
-                # Use the correct incident_number to store knowledge
                 await store_incident_knowledge(incident_number, knowledge_updates, incident_info, note_content)
                 await update_pattern_knowledge(incident_info, knowledge_updates)
 
@@ -595,21 +649,37 @@ async def receive_alert(request: Request):
             status = data.get("status", "unknown").lower()
             incident_number = str(data.get("incident_number") or data.get("number") or data.get("id", "unknown"))
 
-            # OTOBO INTEGRATION: Handle resolved status
+            # UPDATED: OTOBO Integration - Handle resolved status with persistent storage fallback
             if status == "resolved":
+                # Try Redis cache first
                 otobo_ticket_id = cache_get(f"otobo_ticket:{incident_number}")
+                
+                # UPDATED: Fallback to persistent storage if cache miss
+                if not otobo_ticket_id:
+                    webhook_logger.info(f"OTOBO ticket not in Redis, checking persistent storage for incident {incident_number}")
+                    mapping = get_otobo_ticket_mapping(incident_number)
+                    if mapping:
+                        otobo_ticket_id = mapping["ticket_id"]
+                        # Refresh Redis cache
+                        cache_set(f"otobo_ticket:{incident_number}", otobo_ticket_id, ttl_seconds=OTOBO_TICKET_CACHE_TTL)
+                        webhook_logger.info(f"Retrieved Otobo ticket {otobo_ticket_id} from persistent storage for incident {incident_number}")
+                
                 if otobo_ticket_id:
                     try:
-                        resolve_payload = {"ticket_id": str(otobo_ticket_id), "body": "Incident resolved in PagerDuty.", "subject": f"Incident {incident_number} Resolved"}
+                        resolve_payload = {
+                            "ticket_id": str(otobo_ticket_id), 
+                            "body": "Incident resolved in PagerDuty.", 
+                            "subject": f"Incident {incident_number} Resolved"
+                        }
                         requests.post(f"{OTOBO_SERVER_URL}/resolve_ticket", json=resolve_payload, timeout=10)
                         webhook_logger.info(f"Sent resolve request to Otobo for ticket {otobo_ticket_id}")
+                        
+                        # UPDATED: Update timestamp in persistent storage
+                        update_otobo_ticket_timestamp(incident_number)
+                        
                     except Exception as e:
                         webhook_logger.error(f"Failed to send resolve request to Otobo for ticket {otobo_ticket_id}: {e}")
-                # Continue processing for logging purposes
             
-            # Get timestamp from appropriate field.
-            # Use the event-level occurred_at first (this reflects when the webhook event happened,
-            # e.g. acknowledged or resolved), then fall back to any incident-level timestamps.
             occurred_at = (
                 payload.get("event", {}).get("occurred_at")
                 or data.get("occurred_at")
@@ -661,15 +731,7 @@ async def receive_alert(request: Request):
 
             # Only start the pipeline for triggered alerts
             if status == "triggered":
-                # OTOBO INTEGRATION: Create ticket for escalated alert
-                # Note: This is a simplified approach. A better way would be to call this *after* the crew decides to escalate.
-                # For this example, we create the ticket immediately.
-                
-                # OTOBO INTEGRATION: Create ticket for escalated alert using distributed lock
-                # Note: This is a simplified approach. A better way would be to call this *after* the crew decides to escalate.
-                # For this example, we create the ticket immediately.
-                
-                # Use the new function with distributed lock
+                # UPDATED: OTOBO Integration - Create ticket with persistent storage
                 await create_otobo_ticket_with_lock(incident_number, alert)
 
                 result = start_alert_pipeline(alert)
@@ -736,6 +798,51 @@ async def get_all_knowledge():
         webhook_logger.error(f"Error retrieving all knowledge: {e}")
         return JSONResponse(content={"error": str(e)}, status_code=500)
 
+# UPDATED: Added endpoint to view OTOBO ticket mappings
+@app.get("/otobo/mappings")
+async def get_otobo_mappings():
+    """Get all OTOBO ticket mappings"""
+    try:
+        from msteamdev.tools.otobo_ticket_store import get_all_mappings
+        mappings = get_all_mappings()
+        return JSONResponse(content={
+            "total_mappings": len(mappings),
+            "mappings": mappings,
+            "cache_ttl_seconds": OTOBO_TICKET_CACHE_TTL,
+            "cache_ttl_days": OTOBO_TICKET_CACHE_TTL / 86400
+        })
+    except Exception as e:
+        webhook_logger.error(f"Error retrieving OTOBO mappings: {e}")
+        return JSONResponse(content={"error": str(e)}, status_code=500)
+
+# UPDATED: Added endpoint to check specific OTOBO ticket mapping
+@app.get("/otobo/mapping/{incident_number}")
+async def get_otobo_mapping(incident_number: str):
+    """Get OTOBO ticket mapping for specific incident"""
+    try:
+        # Check Redis first
+        ticket_cache_key = f"otobo_ticket:{incident_number}"
+        redis_ticket_id = cache_get(ticket_cache_key)
+        
+        # Check persistent storage
+        mapping = get_otobo_ticket_mapping(incident_number)
+        
+        return JSONResponse(content={
+            "incident_number": incident_number,
+            "redis_cache": {
+                "found": redis_ticket_id is not None,
+                "ticket_id": redis_ticket_id
+            },
+            "persistent_storage": {
+                "found": mapping is not None,
+                "mapping": mapping
+            },
+            "cache_ttl_seconds": OTOBO_TICKET_CACHE_TTL
+        })
+    except Exception as e:
+        webhook_logger.error(f"Error retrieving OTOBO mapping for {incident_number}: {e}")
+        return JSONResponse(content={"error": str(e)}, status_code=500)
+
 @app.get("/config")
 def get_config():
     return JSONResponse(content={
@@ -746,6 +853,12 @@ def get_config():
             "incidents": os.path.exists(INCIDENT_KNOWLEDGE_FILE),
             "patterns": os.path.exists(PATTERNS_KNOWLEDGE_FILE),
             "business_context": os.path.exists(BUSINESS_CONTEXT_FILE)
+        },
+        "otobo_integration": {
+            "server_url": OTOBO_SERVER_URL,
+            "ticket_cache_ttl_seconds": OTOBO_TICKET_CACHE_TTL,
+            "ticket_cache_ttl_days": OTOBO_TICKET_CACHE_TTL / 86400,
+            "persistent_storage_enabled": True
         }
     })
 
@@ -780,11 +893,10 @@ def health_check():
         "timestamp": datetime.utcnow().isoformat(),
         "version": "1.0.0",
         "knowledge_system": knowledge_status,
-        "knowledge_folder": CREWAI_KNOWLEDGE_BASE
+        "knowledge_folder": CREWAI_KNOWLEDGE_BASE,
+        "otobo_integration": {
+            "enabled": True,
+            "cache_ttl_days": OTOBO_TICKET_CACHE_TTL / 86400,
+            "persistent_storage": True
+        }
     })
-
-'''
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=7005, log_level="info")
-'''
