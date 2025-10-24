@@ -19,7 +19,7 @@ app = FastAPI(title="PagerDuty Webhook Receiver")
 LOG_PATH = "src/msteamdev/alert_log.json"
 
 # Otobo server URL
-OTOBO_SERVER_URL = "http://localhost:7007"
+OTOBO_SERVER_URL = os.getenv("OTOBO_SERVER_URL", "http://localhost:7007")
 
 # Configuration flags for filtering
 FILTER_ENABLED = True

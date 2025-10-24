@@ -985,6 +985,7 @@ KNOWLEDGE BASE INSIGHTS:
 
 # OPTIMIZED CORE PIPELINE - streamlined with minimal tools
 
+ENABLE_ACKNOWLEDGMENT = os.getenv("ENABLE_ACKNOWLEDGMENT", "true").lower() == "true"
 async def _run_alert_pipeline_async(alert: dict):
     """The core async pipeline logic with optimized tool loading."""
     start_time = time.time()
@@ -1025,7 +1026,7 @@ async def _run_alert_pipeline_async(alert: dict):
         cache_set_add(ESCALATION_SET_NAME, incident_number)
         logger.info(f"Holding alert {incident_number} for {int(seconds)} seconds before escalation decision (optimized)")
 
-        if alert["status"] == "triggered":
+        if alert["status"] == "triggered" and ENABLE_ACKNOWLEDGMENT:
             # Use optimized acknowledgment task
             asyncio.create_task(check_and_acknowledge_alert_task(alert))
             logger.info(f"Scheduled optimized acknowledgment check for incident {incident_number}")
