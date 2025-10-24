@@ -99,7 +99,7 @@ shift_report:
     KEY PERFORMANCE INDICATORS:
     - Mean Time to Acknowledge (MTTA): {mttr_acknowledge}
     - Mean Time to Resolve (MTTR): {mttr_resolve}
-    - Mean Time to First Response (MTTR): {mttr_first_response}
+    - Mean Time to First Response (MTTFR): {mttr_first_response}
     - Escalation Rate: {escalation_rate}
     - Resolution Rate: {resolution_rate}
     - Acknowledgment Rate: {acknowledgment_rate}
@@ -154,7 +154,7 @@ shift_report:
             ```
             - Mean Time to Acknowledge (MTTA): {mttr_acknowledge}
             - Mean Time to Resolve (MTTR): {mttr_resolve}
-            - Mean Time to First Response (MTTR): {mttr_first_response}
+            - Mean Time to First Response (MTTFR): {mttr_first_response}
             - Escalation Rate: {escalation_rate}
             - Resolution Rate: {resolution_rate}
             - Acknowledgment Rate: {acknowledgment_rate}

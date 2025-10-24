@@ -566,7 +566,7 @@ def calculate_shift_kpis(alerts: List[dict], shift_start: arrow.arrow.Arrow, shi
     logger.info(f"Timing metrics:")
     logger.info(f"  - MTTR: {mean_time_to_resolve}")
     logger.info(f"  - MTTA: {mean_time_to_acknowledge}")
-    logger.info(f"  - MTTR: {mean_time_to_first_response}")
+    logger.info(f"  - MTTFR: {mean_time_to_first_response}")
     logger.info(f"  - SLA breaches: {sla_breaches}/{total_with_sla}")
     logger.info(f"  - SLA compliance: {sla_compliance}")
     
@@ -800,32 +800,14 @@ def run(shift_type: Optional[str] = None, shift_start: Optional[datetime] = None
         logger.error("Missing shift_report task definition")
         return
     
-    # Process alerts
-    alert_summary = []
-    for alert in alerts:
-        try:
-            eligible, reason = check_escalation_eligibility(alert)
-            was_resolved = check_resolution_status(alert, ShiftConfig.ESCALATION_DELAY_MINUTES)
-            escalation_status = "Escalated" if eligible and not was_resolved else "Not Escalated"
-            
-            try:
-                alert_ts = parse_ts_utc(alert.get('timestamp'))
-                alert_timestamp_local = to_local_str(alert_ts)
-            except:
-                alert_timestamp_local = 'Unknown'
-
-            alert_summary.append(AlertDetail(
-                incident_number=int(alert.get('incident_number', 0)),
-                title=alert.get('title', 'Unknown'),
-                severity=alert.get('severity', 'Unknown').upper(),
-                metric=alert.get('metric', 'Unknown'),
-                status=alert.get('status', 'Unknown'),
-                timestamp=alert_timestamp_local,
-                escalation_status=escalation_status,
-                escalation_reason=reason if not was_resolved else 'Resolved within delay period'
-            ))
-        except Exception as e:
-            logger.error(f"Failed to process alert {alert.get('incident_number')}: {e}")
+    # Process alerts with comprehensive timing information
+    # First, build incident states for timing calculations
+    incident_numbers_in_window = set(str(alert.get('incident_number')) for alert in alerts)
+    all_alerts = _load_log_sync()
+    incident_states = build_incident_states(all_alerts, incident_numbers_in_window)
+    
+    # Create alert details with timing information
+    alert_summary = create_alert_details_with_timing(alerts, incident_states)
     
     # Calculate KPIs
     shift_start_arrow = arrow.get(shift_start)
