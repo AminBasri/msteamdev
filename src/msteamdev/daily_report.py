@@ -276,6 +276,155 @@ def check_resolution_status(alert: dict, delay_minutes: int) -> bool:
     return False
 
 
+def build_incident_states(alerts: List[dict], incident_numbers_in_window: set) -> Dict[str, Dict]:
+    """
+    Build comprehensive incident state tracking with timing information.
+    
+    Args:
+        alerts: All alerts from alert_log.json
+        incident_numbers_in_window: Set of incident numbers in the shift window
+        
+    Returns:
+        Dictionary mapping incident numbers to their state tracking data
+    """
+    incident_states = {}
+    
+    for alert in alerts:
+        inc_num = str(alert.get('incident_number'))
+        if inc_num not in incident_numbers_in_window:
+            continue
+            
+        status = alert.get("status", "").lower()
+        
+        try:
+            timestamp = parse_ts_utc(alert.get('timestamp'))
+        except ValueError:
+            continue
+        
+        if inc_num not in incident_states:
+            incident_states[inc_num] = {
+                'triggered_at': None,
+                'acknowledged_at': None,
+                'resolved_at': None,
+                'severity': alert.get("severity", "").lower(),
+                'final_status': status,
+                'all_statuses': []
+            }
+        
+        state = incident_states[inc_num]
+        state['all_statuses'].append((status, timestamp))
+        state['final_status'] = status  # Keep updating to get final status
+        
+        # Track timing for each state (keep earliest occurrence for triggered/acknowledged, latest for resolved)
+        if status == 'triggered' and state['triggered_at'] is None:
+            state['triggered_at'] = timestamp
+        elif status == 'acknowledged' and state['acknowledged_at'] is None:
+            state['acknowledged_at'] = timestamp
+        elif status == 'resolved':
+            state['resolved_at'] = timestamp  # Keep updating to get final resolution time
+    
+    return incident_states
+
+
+def calculate_time_to_resolve(triggered_at: arrow.arrow.Arrow, resolved_at: arrow.arrow.Arrow) -> str:
+    """
+    Calculate human-readable time to resolve.
+    
+    Args:
+        triggered_at: Arrow timestamp when incident was triggered
+        resolved_at: Arrow timestamp when incident was resolved
+        
+    Returns:
+        Human-readable duration string (e.g., "1h 23m" or "45m")
+    """
+    try:
+        duration = resolved_at - triggered_at
+        total_seconds = duration.total_seconds()
+        
+        if total_seconds < 0:
+            return "Invalid (negative duration)"
+        
+        hours = int(total_seconds // 3600)
+        minutes = int((total_seconds % 3600) // 60)
+        
+        if hours > 0:
+            return f"{hours}h {minutes}m"
+        else:
+            return f"{minutes}m"
+            
+    except Exception as e:
+        logger.error(f"Error calculating TTR: {e}")
+        return "Calculation error"
+
+
+def create_alert_details_with_timing(alerts: List[dict], incident_states: Dict[str, Dict]) -> List[AlertDetail]:
+    """
+    Create AlertDetail objects with comprehensive timing information.
+    
+    Args:
+        alerts: List of alert dictionaries (final state for each incident)
+        incident_states: Dictionary mapping incident numbers to their state tracking data
+        
+    Returns:
+        List of AlertDetail objects with complete timing data
+    """
+    alert_summary = []
+    
+    for alert in alerts:
+        try:
+            incident_number = str(alert.get('incident_number'))
+            state = incident_states.get(incident_number, {})
+            
+            # Get escalation info
+            eligible, reason = check_escalation_eligibility(alert)
+            was_resolved = check_resolution_status(alert, ShiftConfig.ESCALATION_DELAY_MINUTES)
+            escalation_status = "Escalated" if eligible and not was_resolved else "Not Escalated"
+            
+            # Format primary timestamp
+            try:
+                alert_ts = parse_ts_utc(alert.get('timestamp'))
+                alert_timestamp_local = to_local_str(alert_ts)
+            except:
+                alert_timestamp_local = 'Unknown'
+            
+            # Extract timing information from state tracking
+            acknowledged_at = None
+            resolved_at = None
+            first_response_at = None
+            
+            if state:
+                # Format timestamps for display
+                if state.get('acknowledged_at'):
+                    acknowledged_at = to_local_str(state['acknowledged_at'])
+                    if not first_response_at:
+                        first_response_at = acknowledged_at
+                
+                if state.get('resolved_at'):
+                    resolved_at = to_local_str(state['resolved_at'])
+                    if not first_response_at:
+                        first_response_at = resolved_at
+            
+            # Create AlertDetail with all timing information
+            alert_summary.append(AlertDetail(
+                incident_number=int(alert.get('incident_number', 0)),
+                title=alert.get('title', 'Unknown'),
+                severity=alert.get('severity', 'Unknown').upper(),
+                metric=alert.get('metric', 'Unknown'),
+                status=alert.get('status', 'Unknown'),
+                timestamp=alert_timestamp_local,
+                escalation_status=escalation_status,
+                escalation_reason=reason if not was_resolved else 'Resolved within delay period',
+                acknowledged_at=acknowledged_at,
+                resolved_at=resolved_at,
+                first_response_at=first_response_at
+            ))
+            
+        except Exception as e:
+            logger.error(f"Failed to process alert {alert.get('incident_number')}: {e}")
+    
+    return alert_summary
+
+
 def calculate_shift_kpis(alerts: List[dict], shift_start: arrow.arrow.Arrow, shift_end: arrow.arrow.Arrow) -> dict:
     """Calculate key operational metrics for the shift."""
     logger.info(f"Calculating KPIs for {len(alerts)} alerts")
