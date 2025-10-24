@@ -35,6 +35,7 @@ from src.msteamdev.models import (
 from src.msteamdev.crew import load_agents, load_yaml
 from src.msteamdev.tools.alert_cache import ALERT_CACHE
 from src.msteamdev.tools.report_metrics import REPORT_METRICS, ReportGenerationMetric
+from src.msteamdev.severity_config import SeverityConfig
 
 class ShiftConfig:
     """Centralized shift configuration."""
@@ -557,20 +558,62 @@ def calculate_shift_kpis(alerts: List[dict], shift_start: arrow.arrow.Arrow, shi
     mean_time_to_acknowledge = f"{sum(tta_values) / len(tta_values):.1f}m" if tta_values else "N/A"
     mean_time_to_first_response = f"{sum(ttfr_values) / len(ttfr_values):.1f}m" if ttfr_values else "N/A"
     
-    # SLA metrics - configurable response SLA threshold
-    # For auto-acknowledgment workflows: SLA should be based on acknowledgment time, not escalation time
-    # Default: 3 minutes (typical auto-acknowledgment delay) or configurable via environment
-    sla_threshold = int(os.getenv("SLA_THRESHOLD_MINUTES", "3"))
-    sla_breaches = sum(1 for t in ttfr_values if t > sla_threshold)
-    total_with_sla = len(ttfr_values)
-    sla_compliance = f"{((total_with_sla - sla_breaches) / total_with_sla * 100):.1f}%" if total_with_sla > 0 else "N/A"
+    # Severity-based SLA metrics
+    sla_breaches_by_severity = {}
+    sla_compliance_by_severity = {}
+    total_sla_breaches = 0
+    total_sla_incidents = 0
+    
+    # Calculate SLA compliance by severity level
+    for severity_level in SeverityConfig.get_all_severity_levels():
+        severity_alerts = [alert for alert in alerts if SeverityConfig.map_alert_severity(alert) == severity_level]
+        if not severity_alerts:
+            sla_breaches_by_severity[severity_level] = 0
+            sla_compliance_by_severity[severity_level] = "N/A"
+            continue
+        
+        # Get SLA threshold for this severity level
+        sla_threshold = SeverityConfig.get_first_response_threshold(severity_level)
+        
+        # Calculate breaches for this severity level
+        severity_ttfr_values = []
+        for alert in severity_alerts:
+            inc_num = str(alert.get('incident_number'))
+            if inc_num in incident_states and incident_states[inc_num].get('triggered_at'):
+                state = incident_states[inc_num]
+                if state.get('acknowledged_at'):
+                    tta = (state['acknowledged_at'] - state['triggered_at']).total_seconds() / 60
+                    severity_ttfr_values.append(tta)
+                elif state.get('resolved_at'):
+                    ttr = (state['resolved_at'] - state['triggered_at']).total_seconds() / 60
+                    severity_ttfr_values.append(ttr)
+        
+        # Calculate breaches and compliance for this severity
+        severity_breaches = sum(1 for t in severity_ttfr_values if t > sla_threshold)
+        severity_total = len(severity_ttfr_values)
+        severity_compliance = ((severity_total - severity_breaches) / severity_total * 100) if severity_total > 0 else 0
+        
+        sla_breaches_by_severity[severity_level] = severity_breaches
+        sla_compliance_by_severity[severity_level] = f"{severity_compliance:.1f}%"
+        
+        total_sla_breaches += severity_breaches
+        total_sla_incidents += severity_total
+    
+    # Overall SLA compliance
+    overall_sla_compliance = f"{((total_sla_incidents - total_sla_breaches) / total_sla_incidents * 100):.1f}%" if total_sla_incidents > 0 else "N/A"
     
     logger.info(f"Timing metrics:")
     logger.info(f"  - MTTR: {mean_time_to_resolve}")
     logger.info(f"  - MTTA: {mean_time_to_acknowledge}")
     logger.info(f"  - MTTFR: {mean_time_to_first_response}")
-    logger.info(f"  - SLA breaches: {sla_breaches}/{total_with_sla}")
-    logger.info(f"  - SLA compliance: {sla_compliance}")
+    logger.info(f"  - Overall SLA compliance: {overall_sla_compliance}")
+    logger.info(f"  - Total SLA breaches: {total_sla_breaches}/{total_sla_incidents}")
+    
+    # Log severity-based SLA metrics
+    for severity_level in SeverityConfig.get_all_severity_levels():
+        if sla_breaches_by_severity.get(severity_level, 0) > 0 or sla_compliance_by_severity.get(severity_level) != "N/A":
+            threshold = SeverityConfig.get_first_response_threshold(severity_level)
+            logger.info(f"  - {severity_level} SLA: {sla_compliance_by_severity[severity_level]} ({sla_breaches_by_severity[severity_level]} breaches, {threshold}min threshold)")
     
     return {
         "total_alerts": len(alerts),
@@ -586,10 +629,12 @@ def calculate_shift_kpis(alerts: List[dict], shift_start: arrow.arrow.Arrow, shi
         "mean_time_to_resolve": mean_time_to_resolve,
         "mean_time_to_acknowledge": mean_time_to_acknowledge,
         "mean_time_to_first_response": mean_time_to_first_response,
-        "sla_breaches": sla_breaches,
-        "sla_compliance": sla_compliance,
-        "sla_compliance_percentage": sla_compliance,
-        "sla_threshold": sla_threshold
+        "sla_breaches": total_sla_breaches,
+        "sla_compliance": overall_sla_compliance,
+        "sla_compliance_percentage": overall_sla_compliance,
+        "sla_breaches_by_severity": sla_breaches_by_severity,
+        "sla_compliance_by_severity": sla_compliance_by_severity,
+        "severity_distribution": SeverityConfig.get_severity_stats(alerts)
     }
 
 
@@ -886,7 +931,9 @@ def run(shift_type: Optional[str] = None, shift_start: Optional[datetime] = None
             acknowledgment_rate=f"{(sum(1 for a in alerts if a.get('status', '').lower() in ['acknowledged', 'resolved']) / len(alerts) * 100):.1f}%" if alerts else "0.0%",
             sla_compliance=shift_kpis.get('sla_compliance_percentage', 'N/A'),
             sla_breaches=shift_kpis.get('sla_breaches', 0),
-            sla_threshold=shift_kpis.get('sla_threshold', 'N/A')
+            severity_distribution=shift_kpis.get('severity_distribution', {}),
+            s2_sla_compliance=shift_kpis.get('sla_compliance_by_severity', {}).get('S2', 'N/A'),
+            s3_sla_compliance=shift_kpis.get('sla_compliance_by_severity', {}).get('S3', 'N/A')
         ),
         expected_output=report_task_def["expected_output"],
         agent=reporter_agent,

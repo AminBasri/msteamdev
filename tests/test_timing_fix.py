@@ -224,18 +224,48 @@ def test_kpi_calculations():
     print(f"\n6. SLA Calculations:")
     print("-" * 30)
     
-    # Get SLA threshold from environment or use default
-    import os
-    sla_threshold = int(os.getenv("SLA_THRESHOLD_MINUTES", "3"))
+    # Severity-based SLA calculations
+    from msteamdev.severity_config import SeverityConfig
     
-    sla_breaches = sum(1 for t in ttfr_values if t > sla_threshold)
-    total_with_sla = len(ttfr_values)
-    sla_compliance = ((total_with_sla - sla_breaches) / total_with_sla * 100) if total_with_sla > 0 else 0
+    print(f"   Severity-based SLA Analysis:")
+    print(f"   " + "-" * 40)
     
-    print(f"   SLA Threshold: {sla_threshold} minutes (configurable via SLA_THRESHOLD_MINUTES)")
-    print(f"   SLA Breaches: {sla_breaches} out of {total_with_sla} incidents")
-    print(f"   SLA Compliance = ({total_with_sla} - {sla_breaches}) ÷ {total_with_sla} × 100 = {sla_compliance:.1f}%")
-    print(f"   Note: SLA measures time to first response (acknowledgment), not escalation time")
+    # Get severity distribution
+    severity_stats = SeverityConfig.get_severity_stats(alerts)
+    print(f"   Severity Distribution: {severity_stats}")
+    
+    # Calculate SLA for each severity level
+    for severity_level in ['S2', 'S3']:  # Focus on S2 and S3 for alerts
+        severity_alerts = [alert for alert in alerts if SeverityConfig.map_alert_severity(alert) == severity_level]
+        if not severity_alerts:
+            print(f"   {severity_level} SLA: N/A (no {severity_level} alerts)")
+            continue
+        
+        # Get SLA threshold for this severity
+        sla_threshold = SeverityConfig.get_first_response_threshold(severity_level)
+        description = SeverityConfig.get_severity_description(severity_level)
+        
+        # Calculate breaches for this severity
+        severity_ttfr_values = []
+        for alert in severity_alerts:
+            inc_num = str(alert.get('incident_number'))
+            if inc_num in incident_states and incident_states[inc_num].get('triggered_at'):
+                state = incident_states[inc_num]
+                if state.get('acknowledged_at'):
+                    tta = (state['acknowledged_at'] - state['triggered_at']).total_seconds() / 60
+                    severity_ttfr_values.append(tta)
+                elif state.get('resolved_at'):
+                    ttr = (state['resolved_at'] - state['triggered_at']).total_seconds() / 60
+                    severity_ttfr_values.append(ttr)
+        
+        # Calculate compliance
+        severity_breaches = sum(1 for t in severity_ttfr_values if t > sla_threshold)
+        severity_total = len(severity_ttfr_values)
+        severity_compliance = ((severity_total - severity_breaches) / severity_total * 100) if severity_total > 0 else 0
+        
+        print(f"   {severity_level} SLA: {severity_compliance:.1f}% ({severity_breaches}/{severity_total} breaches, {sla_threshold}min threshold)")
+        print(f"     Description: {description}")
+        print(f"     Alerts: {len(severity_alerts)} total, {severity_total} with timing data")
     
     # Final results
     print(f"\n7. FINAL RESULTS:")
