@@ -36,6 +36,7 @@ from src.msteamdev.crew import load_agents, load_yaml
 from src.msteamdev.tools.alert_cache import ALERT_CACHE
 from src.msteamdev.tools.report_metrics import REPORT_METRICS, ReportGenerationMetric
 from src.msteamdev.severity_config import SeverityConfig
+from src.msteamdev.daily_metrics_storage import daily_storage, create_daily_metrics_from_kpis
 
 class ShiftConfig:
     """Centralized shift configuration."""
@@ -558,13 +559,33 @@ def calculate_shift_kpis(alerts: List[dict], shift_start: arrow.arrow.Arrow, shi
     mean_time_to_acknowledge = f"{sum(tta_values) / len(tta_values):.1f}m" if tta_values else "N/A"
     mean_time_to_first_response = f"{sum(ttfr_values) / len(ttfr_values):.1f}m" if ttfr_values else "N/A"
     
-    # Severity-based SLA metrics
-    sla_breaches_by_severity = {}
-    sla_compliance_by_severity = {}
+    # Overall SLA compliance (MTTA/MTTFR with 5-minute threshold)
+    acknowledgment_threshold = 5  # 5-minute threshold for acknowledgment/first response
     total_sla_breaches = 0
     total_sla_incidents = 0
     
-    # Calculate SLA compliance by severity level
+    for inc_num, state in incident_states.items():
+        if state.get('triggered_at'):
+            # Calculate time to first response (acknowledgment or resolution)
+            first_response_time = None
+            if state.get('acknowledged_at'):
+                first_response_time = (state['acknowledged_at'] - state['triggered_at']).total_seconds() / 60
+            elif state.get('resolved_at'):
+                first_response_time = (state['resolved_at'] - state['triggered_at']).total_seconds() / 60
+            
+            if first_response_time is not None:
+                total_sla_incidents += 1
+                if first_response_time > acknowledgment_threshold:
+                    total_sla_breaches += 1
+    
+    # Overall SLA compliance
+    overall_sla_compliance = f"{((total_sla_incidents - total_sla_breaches) / total_sla_incidents * 100):.1f}%" if total_sla_incidents > 0 else "N/A"
+    
+    # Severity-based SLA metrics (Resolution thresholds)
+    sla_breaches_by_severity = {}
+    sla_compliance_by_severity = {}
+    
+    # Calculate SLA compliance by severity level (for resolution)
     for severity_level in SeverityConfig.get_all_severity_levels():
         severity_alerts = [alert for alert in alerts if SeverityConfig.map_alert_severity(alert) == severity_level]
         if not severity_alerts:
@@ -572,48 +593,41 @@ def calculate_shift_kpis(alerts: List[dict], shift_start: arrow.arrow.Arrow, shi
             sla_compliance_by_severity[severity_level] = "N/A"
             continue
         
-        # Get SLA threshold for this severity level
-        sla_threshold = SeverityConfig.get_first_response_threshold(severity_level)
+        # Get resolution threshold for this severity level (in hours, convert to minutes)
+        resolution_threshold_hours = SeverityConfig.get_resolution_threshold(severity_level)
+        resolution_threshold_minutes = resolution_threshold_hours * 60
         
-        # Calculate breaches for this severity level
-        severity_ttfr_values = []
+        # Calculate resolution breaches for this severity level
+        severity_ttr_values = []
         for alert in severity_alerts:
             inc_num = str(alert.get('incident_number'))
             if inc_num in incident_states and incident_states[inc_num].get('triggered_at'):
                 state = incident_states[inc_num]
-                if state.get('acknowledged_at'):
-                    tta = (state['acknowledged_at'] - state['triggered_at']).total_seconds() / 60
-                    severity_ttfr_values.append(tta)
-                elif state.get('resolved_at'):
+                # Only count incidents that were resolved
+                if state.get('resolved_at'):
                     ttr = (state['resolved_at'] - state['triggered_at']).total_seconds() / 60
-                    severity_ttfr_values.append(ttr)
+                    severity_ttr_values.append(ttr)
         
         # Calculate breaches and compliance for this severity
-        severity_breaches = sum(1 for t in severity_ttfr_values if t > sla_threshold)
-        severity_total = len(severity_ttfr_values)
+        severity_breaches = sum(1 for t in severity_ttr_values if t > resolution_threshold_minutes)
+        severity_total = len(severity_ttr_values)
         severity_compliance = ((severity_total - severity_breaches) / severity_total * 100) if severity_total > 0 else 0
         
         sla_breaches_by_severity[severity_level] = severity_breaches
         sla_compliance_by_severity[severity_level] = f"{severity_compliance:.1f}%"
-        
-        total_sla_breaches += severity_breaches
-        total_sla_incidents += severity_total
-    
-    # Overall SLA compliance
-    overall_sla_compliance = f"{((total_sla_incidents - total_sla_breaches) / total_sla_incidents * 100):.1f}%" if total_sla_incidents > 0 else "N/A"
     
     logger.info(f"Timing metrics:")
     logger.info(f"  - MTTR: {mean_time_to_resolve}")
     logger.info(f"  - MTTA: {mean_time_to_acknowledge}")
     logger.info(f"  - MTTFR: {mean_time_to_first_response}")
-    logger.info(f"  - Overall SLA compliance: {overall_sla_compliance}")
+    logger.info(f"  - Overall SLA compliance: {overall_sla_compliance} (MTTA/MTTFR - 5min threshold)")
     logger.info(f"  - Total SLA breaches: {total_sla_breaches}/{total_sla_incidents}")
     
-    # Log severity-based SLA metrics
+    # Log severity-based SLA metrics (resolution)
     for severity_level in SeverityConfig.get_all_severity_levels():
         if sla_breaches_by_severity.get(severity_level, 0) > 0 or sla_compliance_by_severity.get(severity_level) != "N/A":
-            threshold = SeverityConfig.get_first_response_threshold(severity_level)
-            logger.info(f"  - {severity_level} SLA: {sla_compliance_by_severity[severity_level]} ({sla_breaches_by_severity[severity_level]} breaches, {threshold}min threshold)")
+            threshold_hours = SeverityConfig.get_resolution_threshold(severity_level)
+            logger.info(f"  - {severity_level} SLA: {sla_compliance_by_severity[severity_level]} ({sla_breaches_by_severity[severity_level]} breaches, {threshold_hours}h resolution threshold)")
     
     return {
         "total_alerts": len(alerts),
@@ -966,22 +980,60 @@ def run(shift_type: Optional[str] = None, shift_start: Optional[datetime] = None
         logger.info(f"Subject: {output.subject}")
         logger.info(f"Body length: {len(output.body)} characters")
         
+        # Store daily metrics for weekly report aggregation
+        try:
+            # Convert alert details to dictionaries for storage
+            alert_details_dicts = [alert.model_dump() for alert in alert_summary]
+            
+            # Create daily metrics object
+            daily_metrics = create_daily_metrics_from_kpis(
+                kpis=shift_kpis,
+                shift_type=shift_type,
+                shift_start=shift_start,
+                shift_end=shift_end,
+                incident_details=alert_details_dicts
+            )
+            
+            # Save to storage
+            if daily_storage.save_daily_metrics(daily_metrics):
+                logger.info(f"Daily metrics saved for {shift_type} shift on {daily_metrics.date}")
+            else:
+                logger.warning("Failed to save daily metrics")
+                
+        except Exception as e:
+            logger.error(f"Failed to store daily metrics: {e}")
+            # Don't fail the entire report if metrics storage fails
+        
     except Exception as e:
         logger.error(f"Report generation failed: {e}", exc_info=True)
         raise
 
 
 def run_weekly_report():
-    """Run the weekly report task."""
-    now = arrow.now(LOCAL_TZ_NAME)
-    # Go back to the last Monday
-    start_of_last_week = now.shift(days=-(now.weekday() + 7))
-    end_of_last_week = start_of_last_week.shift(days=6)
+    """Run the weekly report task using the new AI-powered weekly report generator."""
+    try:
+        from src.msteamdev.weekly_report_generator import generate_last_week_report
+        logger.info("Generating AI-powered weekly report using new weekly report generator")
+        generate_last_week_report(use_ai=True)
+    except Exception as e:
+        logger.error(f"AI-powered weekly report generation failed: {e}")
+        # Fallback to detailed text report
+        try:
+            logger.info("Falling back to detailed text weekly report")
+            generate_last_week_report(use_ai=False)
+        except Exception as e2:
+            logger.error(f"Detailed weekly report generation also failed: {e2}")
+            # Final fallback to old method
+            logger.info("Falling back to old weekly report method")
+            now = arrow.now(LOCAL_TZ_NAME)
+            # Go back to the last Monday
+            start_of_last_week = now.shift(days=-(now.weekday() + 7))
+            end_of_last_week = start_of_last_week.shift(days=6)
 
-    shift_start = start_of_last_week.replace(hour=0, minute=0, second=0, microsecond=0).datetime
-    shift_end = end_of_last_week.replace(hour=23, minute=59, second=59, microsecond=0).datetime
+            shift_start = start_of_last_week.replace(hour=0, minute=0, second=0, microsecond=0).datetime
+            shift_end = end_of_last_week.replace(hour=23, minute=59, second=59, microsecond=0).datetime
 
-    run(shift_type="weekly", shift_start=shift_start, shift_end=shift_end)
+            run(shift_type="weekly", shift_start=shift_start, shift_end=shift_end)
 
 
 if __name__ == "__main__":

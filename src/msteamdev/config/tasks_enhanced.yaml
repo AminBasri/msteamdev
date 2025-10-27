@@ -103,11 +103,11 @@ shift_report:
     - Escalation Rate: {escalation_rate}
     - Resolution Rate: {resolution_rate}
     - Acknowledgment Rate: {acknowledgment_rate}
-    - SLA Compliance: {sla_compliance}
+    - SLA Compliance: {sla_compliance} (Acknowledgment compliance)
     - SLA Breaches: {sla_breaches}
     - Severity Distribution: {severity_distribution}
-    - S2 SLA Compliance: {s2_sla_compliance}
-    - S3 SLA Compliance: {s3_sla_compliance}
+    - S2 SLA Compliance: {s2_sla_compliance} (Critical alerts - 30min threshold)
+    - S3 SLA Compliance: {s3_sla_compliance} (Warning alerts - 60min threshold)
 
     ALERT DETAILS (JSON format for structured parsing):
     {alert_details}
@@ -161,7 +161,7 @@ shift_report:
             - Escalation Rate: {escalation_rate}
             - Resolution Rate: {resolution_rate}
             - Acknowledgment Rate: {acknowledgment_rate}
-            - SLA Compliance: {sla_compliance}
+            - SLA Compliance: {sla_compliance} (Acknowledgment compliance)
             - Severity Distribution: {severity_distribution}
             - S2 SLA Compliance: {s2_sla_compliance} (Critical alerts - 30min threshold)
             - S3 SLA Compliance: {s3_sla_compliance} (Warning alerts - 60min threshold)
@@ -354,3 +354,187 @@ check_and_acknowledge_alert:
   agent: pagerduty_manager
   context: []
   output_pydantic: src.msteamdev.models.IncidentManagementResult
+
+weekly_report:
+  description: >
+    Generate a comprehensive weekly NOC report for management, providing strategic insights and operational analysis across the entire week.
+    
+    WEEKLY CONTEXT:
+    - Period: {week_start} to {week_end}
+    - Total Shifts Analyzed: {total_shifts}
+    - Report Type: Weekly Strategic Analysis
+    - Operating Environment: Production NOC
+    
+    WEEKLY PERFORMANCE METRICS:
+    - Total Alerts: {total_alerts}
+    - Total Incidents: {total_incidents}
+    - Total Resolved: {total_resolved}
+    - Total Acknowledged: {total_acknowledged}
+    - Total Critical: {total_critical}
+    - Total Warning: {total_warning}
+    - Total Escalated: {total_escalated}
+    
+    WEEKLY AVERAGE METRICS:
+    - Average MTTA: {avg_mtta_minutes:.1f}m
+    - Average MTTR: {avg_mttr_minutes:.1f}m
+    - Average MTTFR: {avg_mttfr_minutes:.1f}m
+    - Average Resolution Rate: {avg_resolution_rate:.1f}%
+    - Average Acknowledgment Rate: {avg_acknowledgment_rate:.1f}%
+    - Average Escalation Rate: {avg_escalation_rate:.1f}%
+    
+    WEEKLY SLA ANALYSIS:
+    - Average SLA Compliance: {avg_sla_compliance:.1f}% (MTTA/MTTFR - 5min threshold)
+    - Total SLA Breaches: {total_sla_breaches}
+    - Average S2 SLA Compliance: {avg_s2_sla_compliance:.1f}% (Critical - 8h resolution)
+    - Average S3 SLA Compliance: {avg_s3_sla_compliance:.1f}% (Warning - 24h resolution)
+    
+    DAILY BREAKDOWN DATA:
+    {daily_breakdown_data}
+    
+    TREND ANALYSIS DATA:
+    {trend_analysis_data}
+    
+    WEEKLY PERFORMANCE ASSESSMENT:
+    - Overall Performance: {performance_status}
+    - Performance Grade: {performance_grade}
+    
+    REPORT STRUCTURE REQUIREMENTS:
+    
+    1. Enhanced Subject Line:
+       REQUIRED FORMAT: "{performance_emoji} NOC Weekly Report | {week_start} to {week_end} | {total_alerts} Alerts | {performance_grade} Performance"
+    
+    2. Enhanced Email Body Structure:
+    
+       a) EXECUTIVE SUMMARY:
+          - Professional greeting: "Dear NOC Management Team,"
+          - Weekly overview: "This comprehensive weekly report analyzes NOC operations for the period of {week_start} to {week_end}, covering {total_shifts} shifts and {total_alerts} total alerts."
+          - Overall Performance: {performance_status} ({performance_grade})
+          - Key Highlights: 3-5 most significant findings or achievements
+          - Critical Issues: Any ongoing or recurring problems requiring attention
+    
+       b) WEEKLY PERFORMANCE ANALYSIS:
+          Title: "**Weekly Performance Analysis:**"
+          
+          Content to include:
+          - Operational Overview: Summary of week's activity level and stability
+          - Statistical Summary:
+            * Total Alerts Processed: {total_alerts}
+            * Total Incidents Managed: {total_incidents}
+            * Resolution Success Rate: {avg_resolution_rate:.1f}%
+            * SLA Compliance: {avg_sla_compliance:.1f}%
+            * Escalation Rate: {avg_escalation_rate:.1f}%
+          
+          - Performance Trends Analysis:
+            * Alert Volume Trends: {alert_volume_trend}
+            * SLA Compliance Trends: {sla_compliance_trend}
+            * Resolution Rate Trends: {resolution_rate_trend}
+            * Critical Alert Patterns: {critical_alert_analysis}
+    
+       c) DAILY PERFORMANCE BREAKDOWN:
+          Title: "**Daily Performance Breakdown:**"
+          
+          Analyze the daily_breakdown_data to provide:
+          - Day-by-day performance summary
+          - Peak and low activity days
+          - Daily SLA compliance variations
+          - Notable incidents or patterns by day
+          - Weekend vs weekday performance comparison (if applicable)
+    
+       d) SLA COMPLIANCE DEEP DIVE:
+          Title: "**SLA Compliance Analysis:**"
+          
+          - Overall SLA Performance: {avg_sla_compliance:.1f}% vs Target (90%)
+          - S2 SLA Performance: {avg_s2_sla_compliance:.1f}% vs Target (90%)
+          - S3 SLA Performance: {avg_s3_sla_compliance:.1f}% vs Target (90%)
+          - Total SLA Breaches: {total_sla_breaches}
+          - Breach Analysis: Identify patterns in SLA breaches
+          - Improvement Opportunities: Specific recommendations for SLA improvement
+    
+       e) OPERATIONAL INSIGHTS & RECOMMENDATIONS:
+          Title: "**Operational Insights & Strategic Recommendations:**"
+          
+          - Process Improvements:
+            * Based on MTTA/MTTR analysis, identify bottlenecks
+            * Recommend process optimizations
+            * Suggest automation opportunities
+          
+          - Resource Optimization:
+            * Analyze escalation patterns for resource allocation
+            * Identify peak workload periods
+            * Recommend staffing adjustments
+          
+          - Technology Enhancements:
+            * Alert tuning opportunities based on patterns
+            * Monitoring improvements
+            * Tool integration recommendations
+          
+          - Risk Management:
+            * Identify recurring critical issues
+            * Proactive measures for common problems
+            * Business continuity considerations
+    
+       f) WEEKLY TREND ANALYSIS:
+          Title: "**Weekly Trend Analysis:**"
+          
+          Use trend_analysis_data to provide:
+          - Alert Volume Trends: Peak days, patterns, anomalies
+          - Performance Trends: Improving/declining metrics
+          - Seasonal Patterns: Day-of-week effects, time-based patterns
+          - Predictive Insights: What to expect next week
+    
+       g) STRATEGIC RECOMMENDATIONS:
+          Title: "**Strategic Recommendations for Next Week:**"
+          
+          - Immediate Actions (1-3 items):
+            * Address critical issues identified
+            * Implement quick wins for SLA improvement
+            * Resolve ongoing escalations
+          
+          - Medium-term Initiatives (1-3 items):
+            * Process improvements
+            * Training needs
+            * Tool enhancements
+          
+          - Long-term Strategic Goals:
+            * Performance targets for next month
+            * Infrastructure improvements
+            * Team development plans
+    
+       h) DATA QUALITY & REPORTING:
+          Title: "**Data Quality & Reporting:**"
+          
+          - Report Generated: [Current timestamp]
+          - Data Coverage: {total_shifts} shifts analyzed
+          - Data Completeness: Assessment of data quality
+          - Known Limitations: Any data gaps or issues
+          - Next Report: Scheduled date for next weekly report
+    
+       i) PROFESSIONAL CLOSING:
+          - Summary of key strategic priorities
+          - Contact information for follow-up
+          - Signature block:
+            ```
+            Best regards,
+            CrewAI Weekly Reporting System
+            NOC Management Team
+            ```
+    
+    3. FORMATTING REQUIREMENTS:
+       - Professional executive-level tone
+       - Clear section headers with **bold** formatting
+       - Bullet points for easy scanning
+       - Charts/visual indicators where appropriate (use text-based representations)
+       - Executive summary format suitable for C-level review
+       - Keep total length reasonable (aim for 400-600 lines)
+    
+    4. IMPORTANT NOTES:
+       - Focus on strategic insights rather than operational details
+       - Provide actionable recommendations for management
+       - Use trend analysis to predict future performance
+       - Highlight both successes and areas for improvement
+       - Maintain professional tone suitable for executive audience
+       - Include specific metrics and targets for accountability
+  expected_output: >
+    A Pydantic object containing a comprehensive weekly report email with subject and body, providing strategic insights and operational analysis for NOC management.
+  agent: reporter
+  output_pydantic: src.msteamdev.models.ShiftReportOutput

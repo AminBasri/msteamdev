@@ -14,11 +14,16 @@ from dataclasses import dataclass
 class SLAThreshold:
     """SLA threshold configuration for a severity level."""
     first_response_minutes: int
+    acknowledgment_minutes: int
     resolution_hours: int
     
     def get_first_response_minutes(self) -> int:
         """Get first response threshold in minutes."""
         return self.first_response_minutes
+    
+    def get_acknowledgment_minutes(self) -> int:
+        """Get acknowledgment threshold in minutes."""
+        return self.acknowledgment_minutes
     
     def get_resolution_hours(self) -> int:
         """Get resolution threshold in hours."""
@@ -38,10 +43,10 @@ class SeverityConfig:
     
     # SLA thresholds by severity level
     SLA_THRESHOLDS = {
-        "S1": SLAThreshold(first_response_minutes=15, resolution_hours=4),    # Outage (not used for alerts)
-        "S2": SLAThreshold(first_response_minutes=30, resolution_hours=8),    # Critical alerts
-        "S3": SLAThreshold(first_response_minutes=60, resolution_hours=24),   # Warning alerts
-        "S4": SLAThreshold(first_response_minutes=240, resolution_hours=72)    # Low priority (future use)
+        "S1": SLAThreshold(first_response_minutes=15, acknowledgment_minutes=10, resolution_hours=4),    # Outage (not used for alerts)
+        "S2": SLAThreshold(first_response_minutes=30, acknowledgment_minutes=20, resolution_hours=8),    # Critical alerts
+        "S3": SLAThreshold(first_response_minutes=60, acknowledgment_minutes=45, resolution_hours=24),   # Warning alerts
+        "S4": SLAThreshold(first_response_minutes=240, acknowledgment_minutes=180, resolution_hours=72)    # Low priority (future use)
     }
     
     @classmethod
@@ -84,6 +89,20 @@ class SeverityConfig:
         """
         threshold = cls.get_sla_threshold(severity_level)
         return threshold.get_first_response_minutes()
+    
+    @classmethod
+    def get_acknowledgment_threshold(cls, severity_level: str) -> int:
+        """
+        Get acknowledgment threshold in minutes for a severity level.
+        
+        Args:
+            severity_level: ITIL severity (S1, S2, S3, S4)
+            
+        Returns:
+            Acknowledgment threshold in minutes
+        """
+        threshold = cls.get_sla_threshold(severity_level)
+        return threshold.get_acknowledgment_minutes()
     
     @classmethod
     def get_resolution_threshold(cls, severity_level: str) -> int:

@@ -221,8 +221,8 @@ def test_kpi_calculations():
     print(f"   Escalation Rate = {len(escalated_alerts)} ÷ {total_incidents} × 100 = {escalation_rate:.1f}%")
     
     # SLA calculations
-    print(f"\n6. SLA Calculations:")
-    print("-" * 30)
+    print(f"\n6. S2/S3 SLA Calculations (Resolution thresholds):")
+    print("-" * 50)
     
     # Severity-based SLA calculations
     from msteamdev.severity_config import SeverityConfig
@@ -241,31 +241,42 @@ def test_kpi_calculations():
             print(f"   {severity_level} SLA: N/A (no {severity_level} alerts)")
             continue
         
-        # Get SLA threshold for this severity
-        sla_threshold = SeverityConfig.get_first_response_threshold(severity_level)
+        # Get resolution threshold for this severity (in hours, convert to minutes)
+        resolution_threshold_hours = SeverityConfig.get_resolution_threshold(severity_level)
+        resolution_threshold_minutes = resolution_threshold_hours * 60
         description = SeverityConfig.get_severity_description(severity_level)
         
-        # Calculate breaches for this severity
-        severity_ttfr_values = []
+        print(f"\n   {severity_level} SLA Analysis:")
+        print(f"     Description: {description}")
+        print(f"     Threshold: {resolution_threshold_hours}h ({resolution_threshold_minutes}min)")
+        print(f"     Total alerts: {len(severity_alerts)}")
+        
+        # Calculate resolution breaches for this severity
+        severity_ttr_values = []
+        print(f"     Incident Analysis:")
+        
         for alert in severity_alerts:
             inc_num = str(alert.get('incident_number'))
             if inc_num in incident_states and incident_states[inc_num].get('triggered_at'):
                 state = incident_states[inc_num]
-                if state.get('acknowledged_at'):
-                    tta = (state['acknowledged_at'] - state['triggered_at']).total_seconds() / 60
-                    severity_ttfr_values.append(tta)
-                elif state.get('resolved_at'):
+                # Only count incidents that were resolved
+                if state.get('resolved_at'):
                     ttr = (state['resolved_at'] - state['triggered_at']).total_seconds() / 60
-                    severity_ttfr_values.append(ttr)
+                    severity_ttr_values.append(ttr)
+                    breach_status = "BREACH" if ttr > resolution_threshold_minutes else "OK"
+                    print(f"       Incident {inc_num}: {ttr:.1f}m - {breach_status}")
+                else:
+                    print(f"       Incident {inc_num}: Not resolved - N/A")
         
         # Calculate compliance
-        severity_breaches = sum(1 for t in severity_ttfr_values if t > sla_threshold)
-        severity_total = len(severity_ttfr_values)
+        severity_breaches = sum(1 for t in severity_ttr_values if t > resolution_threshold_minutes)
+        severity_total = len(severity_ttr_values)
         severity_compliance = ((severity_total - severity_breaches) / severity_total * 100) if severity_total > 0 else 0
         
-        print(f"   {severity_level} SLA: {severity_compliance:.1f}% ({severity_breaches}/{severity_total} breaches, {sla_threshold}min threshold)")
-        print(f"     Description: {description}")
-        print(f"     Alerts: {len(severity_alerts)} total, {severity_total} with timing data")
+        print(f"     Summary:")
+        print(f"       Resolved incidents: {severity_total}")
+        print(f"       Breaches (>{resolution_threshold_hours}h): {severity_breaches}")
+        print(f"       Compliance: {severity_total - severity_breaches}/{severity_total} = {severity_compliance:.1f}%")
     
     # Final results
     print(f"\n7. FINAL RESULTS:")
@@ -285,7 +296,48 @@ def test_kpi_calculations():
     print(f"   Resolution Rate: {resolution_rate:.1f}%")
     print(f"   Acknowledgment Rate: {acknowledgment_rate:.1f}%")
     print(f"   Escalation Rate: {escalation_rate:.1f}%")
-    print(f"   SLA Compliance: {sla_compliance:.1f}%")
+    
+    # Calculate overall SLA compliance (MTTA/MTTFR with 5-minute threshold)
+    print(f"\n5. SLA Compliance Calculation (MTTA/MTTFR - 5min threshold):")
+    print("-" * 50)
+    
+    acknowledgment_threshold = 5  # 5-minute threshold for acknowledgment/first response
+    total_breaches = 0
+    total_with_timing = 0
+    
+    print(f"   Threshold: {acknowledgment_threshold} minutes")
+    print(f"   Incident Analysis:")
+    
+    for inc_num, state in incident_states.items():
+        if state.get('triggered_at'):
+            # Calculate time to first response (acknowledgment or resolution)
+            first_response_time = None
+            response_type = None
+            
+            if state.get('acknowledged_at'):
+                first_response_time = (state['acknowledged_at'] - state['triggered_at']).total_seconds() / 60
+                response_type = "acknowledged"
+            elif state.get('resolved_at'):
+                first_response_time = (state['resolved_at'] - state['triggered_at']).total_seconds() / 60
+                response_type = "resolved"
+            
+            if first_response_time is not None:
+                total_with_timing += 1
+                breach_status = "BREACH" if first_response_time > acknowledgment_threshold else "OK"
+                if first_response_time > acknowledgment_threshold:
+                    total_breaches += 1
+                
+                print(f"     Incident {inc_num}: {first_response_time:.1f}m ({response_type}) - {breach_status}")
+    
+    print(f"\n   Summary:")
+    print(f"     Total incidents with timing: {total_with_timing}")
+    print(f"     Breaches (>5min): {total_breaches}")
+    print(f"     Compliance: {total_with_timing - total_breaches}/{total_with_timing} = {((total_with_timing - total_breaches) / total_with_timing * 100):.1f}%")
+    
+    sla_compliance = ((total_with_timing - total_breaches) / total_with_timing * 100) if total_with_timing > 0 else 0
+    sla_breaches = total_breaches
+    
+    print(f"   SLA Compliance: {sla_compliance:.1f}% (MTTA/MTTFR - 5min threshold)")
     print(f"   SLA Breaches: {sla_breaches}")
 
 def test_specific_incident(incident_number):
