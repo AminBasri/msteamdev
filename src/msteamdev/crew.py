@@ -767,6 +767,12 @@ async def run_escalation_pipeline(alert: dict):
     incident_number = alert["incident_number"]
     logger.info(f"Escalation pipeline triggered for incident {incident_number} (optimized)")
     from msteamdev.tools.notify import send_notification
+    from msteamdev.priority_config import PriorityConfig
+    
+    # Map alert priority if not already set
+    if 'priority' not in alert or not alert.get('priority'):
+        alert['priority'] = PriorityConfig.map_alert_priority(alert)
+        logger.debug(f"Mapped alert priority for incident {incident_number}: {alert['priority']}")
 
     try:
         delay_minutes = int(os.getenv("ESCALATION_DELAY_MINUTES", "3"))
