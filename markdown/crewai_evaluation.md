@@ -747,7 +747,7 @@ Alert Arrives
 - Error rate < 0.1%
 - No increase in false negatives
 - Positive feedback from operations team
-- Performance metrics within SLA
+- Performance metrics within KPI
 
 ### Phase 4: Full Deployment (Week 4)
 

@@ -842,9 +842,31 @@ KNOWLEDGE BASE INSIGHTS:
         ai_analysis_result = await crew.kickoff_async()
         ai_analysis = str(ai_analysis_result.raw or "")
 
+        print(f"DEBUG: Calling intelligent_escalation_policy with alert: {json.dumps(alert)}")
         policy_result_str = intelligent_escalation_policy.run(json.dumps(alert))
-        policy_result_dict = json.loads(policy_result_str)
-        policy_result_tuple = (policy_result_dict.get("eligible", False), policy_result_dict.get("reason", ""))
+        print(f"DEBUG: intelligent_escalation_policy returned: {policy_result_str}")
+
+        try:
+            policy_result_dict = json.loads(policy_result_str)
+            policy_result_tuple = (policy_result_dict.get("eligible", False), policy_result_dict.get("reason", ""))
+        except Exception as policy_error:
+            logger.error(f"Error parsing intelligent_escalation_policy result for incident {incident_number}: {policy_error}")
+            raise # Re-raise to be caught by the outer try-except
+
+        logger.debug(f"Alert before make_decision: {alert}")
+        logger.debug(f"Policy result tuple before make_decision: {policy_result_tuple}")
+
+        # Make decision using the Tiered Decision Framework
+        try:
+            decision_result = tiered_framework.make_decision(alert, policy_result_tuple, None, ai_analysis)
+        except Exception as e:
+            import traceback
+            logger.error(f"CRITICAL ERROR in tiered_framework.make_decision for incident {incident_number}: {e}")
+            logger.error(traceback.format_exc())
+            raise # Re-raise to be caught by the outer try-except
+
+        logger.debug(f"Alert before make_decision: {alert}")
+        logger.debug(f"Policy result tuple before make_decision: {policy_result_tuple}")
 
         # Make decision using the Tiered Decision Framework
         decision_result = tiered_framework.make_decision(alert, policy_result_tuple, None, ai_analysis)
@@ -1080,6 +1102,11 @@ def start_alert_pipeline(alert: dict):
     Synchronous entry point to start the optimized alert pipeline in a background thread.
     This should be called from the webhook receiver.
     """
+    # Ensure 'priority' is present, defaulting to 'medium' if not provided
+    if 'priority' not in alert:
+        alert['priority'] = 'medium'
+        logger.warning(f"Alert {alert.get('incident_number', 'N/A')} received without 'priority'. Defaulting to 'medium'.")
+
     thread = Thread(target=_run_pipeline_in_background, args=(alert,))
     thread.daemon = True
     thread.start()
@@ -1196,6 +1223,7 @@ if __name__ == "__main__":
         "incident_number": "192",
         "title": "ALARM: '[WARNING] [INFOPRO-RFC] Synergi CORE Prod - High CPU Util...' in Asia Pacific (Singapore)",
         "severity": "WARNING",
+        "priority": "medium",
         "timestamp": "2025-08-19T03:08:06Z",
         "metric": "CPU Utilization",
         "status": "triggered",

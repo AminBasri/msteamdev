@@ -43,6 +43,7 @@ class EscalationContext:
     metric_type: str                  # CPU, Memory, Disk, Network, etc.
     service_tier: ServiceTier         # Production, Staging, etc.
     business_impact: BusinessImpact   # Actual business impact assessment
+    priority: str                     # Priority of the alert (e.g., P1, P2, P3)
     
     # Timing context
     is_business_hours: bool
@@ -111,6 +112,7 @@ class IntelligentPolicyEngine:
         Returns:
             Tuple of (should_escalate, detailed_reason, context)
         """
+        logger.debug(f"IntelligentPolicyEngine: Assessing eligibility for alert: {alert.get('incident_number')}")
         try:
             # Build rich escalation context
             context = self._build_escalation_context(alert)
@@ -131,6 +133,7 @@ class IntelligentPolicyEngine:
     
     def _build_escalation_context(self, alert: Dict[str, Any]) -> EscalationContext:
         """Build comprehensive context for escalation decision"""
+        logger.debug(f"IntelligentPolicyEngine: Building escalation context for incident: {alert.get('incident_number')}")
         
         title = alert.get('title', '').lower()
         severity = alert.get('severity', 'unknown').lower()
@@ -170,6 +173,7 @@ class IntelligentPolicyEngine:
             metric_type=metric_type,
             service_tier=service_tier,
             business_impact=business_impact,
+            priority=alert.get('priority', 'unknown'),
             is_business_hours=is_business_hours,
             is_weekend=is_weekend,
             hour_of_day=hour_of_day,
@@ -517,6 +521,7 @@ class IntelligentPolicyEngine:
         reason = f"{symbol} {action}:\n"
         reason += f"- Title: {alert.get('title')}\n"
         reason += f"- Severity: {context.severity_declared} (detected: {context.severity_from_title})\n"
+        reason += f"- Priority: {context.priority.upper()}\n"
         reason += f"- Incident: {alert.get('incident_number')}\n"
         reason += f"- Timestamp: {alert.get('timestamp')}\n"
         reason += f"- Business Impact: {context.business_impact.value}\n"

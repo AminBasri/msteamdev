@@ -9,7 +9,7 @@ import os
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Union
 from dataclasses import dataclass, asdict
 import arrow
 
@@ -38,7 +38,6 @@ class DailyMetrics:
     # Timing metrics (in minutes)
     mtta_minutes: float
     mttr_minutes: float
-    mttfr_minutes: float
     
     # Rates (percentages)
     resolution_rate: float
@@ -48,8 +47,8 @@ class DailyMetrics:
     # SLA metrics
     sla_compliance: float  # Overall SLA compliance percentage
     sla_breaches: int
-    s2_sla_compliance: float
-    s3_sla_compliance: float
+    p2_kpi_compliance: float  # Critical alert resolution compliance (8h)
+    p3_kpi_compliance: float  # Warning alert resolution compliance (24h)
     
     # Incident details
     incident_details: List[Dict[str, Any]]
@@ -61,7 +60,7 @@ class DailyMetrics:
 class DailyMetricsStorage:
     """Handles storage and retrieval of daily metrics."""
     
-    def __init__(self, storage_dir: str = None):
+    def __init__(self, storage_dir: Optional[str] = None):
         """Initialize storage with directory path."""
         if storage_dir is None:
             # Default to data directory in project root
@@ -112,6 +111,12 @@ class DailyMetricsStorage:
             with open(file_path, 'r') as f:
                 metrics_dict = json.load(f)
             
+            # Handle legacy fields
+            if 's2_sla_compliance' in metrics_dict:
+                metrics_dict['p2_kpi_compliance'] = metrics_dict.pop('s2_sla_compliance')
+            if 's3_sla_compliance' in metrics_dict:
+                metrics_dict['p3_kpi_compliance'] = metrics_dict.pop('s3_sla_compliance')
+                
             # Convert back to DailyMetrics object
             metrics = DailyMetrics(**metrics_dict)
             logger.info(f"Loaded daily metrics from {file_path}")
@@ -181,12 +186,14 @@ def create_daily_metrics_from_kpis(
     date_str = shift_start.strftime('%Y-%m-%d')
     
     # Convert timing metrics from string format to float
-    def parse_timing_metric(metric_str: str) -> float:
-        """Parse timing metric string (e.g., '1454.6m') to float minutes."""
-        if metric_str == 'N/A':
+    def parse_timing_metric(metric_input: Union[str, float, int]) -> float:
+        """Parse timing metric input (string '1454.6m' or numeric) to float minutes."""
+        if metric_input == 'N/A' or metric_input is None:
             return 0.0
+        if isinstance(metric_input, (float, int)):
+            return float(metric_input)
         try:
-            return float(metric_str.replace('m', ''))
+            return float(str(metric_input).replace('m', ''))
         except:
             return 0.0
     
@@ -213,12 +220,11 @@ def create_daily_metrics_from_kpis(
         acknowledged_alerts=kpis.get('acknowledged_alerts', 0),
         critical_alerts=kpis.get('critical_alerts', 0),
         warning_alerts=kpis.get('warning_alerts', 0),
-        escalated_alerts=len(kpis.get('escalated_alerts', [])),
+        escalated_alerts=kpis.get('escalated_count', len(kpis.get('escalated_alerts', []) if isinstance(kpis.get('escalated_alerts'), list) else [])),
         
         # Timing metrics
         mtta_minutes=parse_timing_metric(kpis.get('mean_time_to_acknowledge', '0.0m')),
         mttr_minutes=parse_timing_metric(kpis.get('mean_time_to_resolve', '0.0m')),
-        mttfr_minutes=parse_timing_metric(kpis.get('mean_time_to_first_response', '0.0m')),
         
         # Rates
         resolution_rate=parse_percentage(kpis.get('resolution_rate', '0.0%')),
@@ -228,8 +234,8 @@ def create_daily_metrics_from_kpis(
         # SLA metrics
         sla_compliance=parse_percentage(kpis.get('sla_compliance_percentage', '0.0%')),
         sla_breaches=kpis.get('sla_breaches', 0),
-        s2_sla_compliance=parse_percentage(kpis.get('sla_compliance_by_severity', {}).get('S2', '0.0%')),
-        s3_sla_compliance=parse_percentage(kpis.get('sla_compliance_by_severity', {}).get('S3', '0.0%')),
+        p2_kpi_compliance=parse_percentage(kpis.get('kpi_compliance_by_priority', {}).get('P2', '0.0%')),
+        p3_kpi_compliance=parse_percentage(kpis.get('kpi_compliance_by_priority', {}).get('P3', '0.0%')),
         
         # Incident details
         incident_details=incident_details,

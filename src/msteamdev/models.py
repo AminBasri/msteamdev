@@ -9,23 +9,22 @@ from crewai.tools import BaseTool
 class AlertDetail(BaseModel):
     incident_number: int
     title: str
-    severity: str
+    priority: str
     metric: str
     status: str
     timestamp: str
     escalation_status: str
     escalation_reason: str
     category: Optional[str] = None
-    priority: Optional[str] = None
+    
     suspected_root_cause: Optional[str] = None
     problem_id: Optional[str] = None
     # Timing fields for KPIs
     acknowledged_at: Optional[str] = None
     resolved_at: Optional[str] = None
     closed_at: Optional[str] = None
-    first_response_at: Optional[str] = None
     last_update_at: Optional[str] = None
-    sla_breach_at: Optional[str] = None
+    kpi_breach_at: Optional[str] = None
 
 class AlertMatchCriteria(
     BaseModel
@@ -34,7 +33,7 @@ class AlertMatchCriteria(
     At least one field must be provided.
     """
     title: Optional[str] = Field(default=None, description="Title to match.")
-    severity: Optional[str] = Field(default=None, description="Severity to match.")
+    priority: Optional[str] = Field(default=None, description="Priority to match.")
     metric: Optional[str] = Field(default=None, description="Metric to match.")
     status: Optional[str] = Field(default=None, description="Status to match.")
 
@@ -55,7 +54,7 @@ class ReportMetadata(BaseModel):
     generation_timestamp: str = Field(..., description="Timestamp when the report was generated (UTC).")
     alert_count: int = Field(default=0, description="Total number of alerts in the report period")
     critical_alerts: int = Field(default=0, description="Number of critical alerts")
-    sla_breaches: int = Field(default=0, description="Number of SLA breaches")
+    kpi_breaches: int = Field(default=0, description="Number of KPI breaches")
     mttr_minutes: float = Field(default=0.0, description="Mean Time To Resolve in minutes")
 
 class ShiftReportOutput(

@@ -70,7 +70,7 @@ def with_tool_metrics(tool_name: str):
 @with_tool_metrics("ReadAlertLogEnhanced")
 def read_alert_log_enhanced(
     limit: int = 100,
-    severity_filter: Optional[str] = None,
+    priority_filter: Optional[str] = None,
     hours_back: Optional[int] = None
 ) -> str:
     """
@@ -78,7 +78,7 @@ def read_alert_log_enhanced(
     
     Args:
         limit: Maximum number of alerts to return
-        severity_filter: Filter by severity (critical, high, warning, etc.)
+        priority_filter: Filter by priority (critical, high, warning, etc.)
         hours_back: Only return alerts from the last N hours
     
     Returns:
@@ -93,7 +93,7 @@ def read_alert_log_enhanced(
                 "tool": "ReadAlertLogEnhanced",
                 "parameters": {
                     "limit": limit,
-                    "severity_filter": severity_filter,
+                    "priority_filter": priority_filter,
                     "hours_back": hours_back
                 }
             }
@@ -121,10 +121,10 @@ def read_alert_log_enhanced(
             ]
         
         # Apply severity filter if specified
-        if severity_filter:
+        if priority_filter:
             alerts = [
                 alert for alert in alerts
-                if alert.get("severity", "").lower() == severity_filter.lower()
+                if alert.get("priority", "").lower() == priority_filter.lower()
             ]
         
         # Apply limit
@@ -171,7 +171,7 @@ def get_alert_trends(hours: int = 24) -> str:
         trends = {
             "time_period_hours": hours,
             "total_alerts": len(recent_alerts),
-            "severity_distribution": _get_severity_distribution(recent_alerts),
+            "priority_distribution": _get_priority_distribution(recent_alerts),
             "hourly_distribution": _get_hourly_distribution(recent_alerts),
             "top_metrics": _get_top_metrics(recent_alerts),
             "escalation_rate": _calculate_escalation_rate(recent_alerts),
@@ -216,11 +216,11 @@ def get_system_health() -> str:
 
 # Helper functions
 
-def _get_severity_distribution(alerts: List[Dict]) -> Dict[str, int]:
-    """Get distribution of alert severities."""
+def _get_priority_distribution(alerts: List[Dict]) -> Dict[str, int]:
+    """Get distribution of alert priorities."""
     distribution = {}
     for alert in alerts:
-        severity = alert.get("severity", "unknown")
+        priority = alert.get("priority", "unknown")
         distribution[severity] = distribution.get(severity, 0) + 1
     return distribution
 

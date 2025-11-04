@@ -159,7 +159,7 @@ DATA QUALITY INDICATORS:
 1. EXECUTIVE SUMMARY (30 seconds to read)
    - Overall status: GREEN/AMBER/RED
    - Critical actions needed: 0-3 bullet points
-   - Shift performance: Below/Meeting/Exceeding SLAs
+   - Shift performance: Below/Meeting/Exceeding KPIs
 
 2. HANDOVER PRIORITIES (What incoming shift MUST know)
    ⚠️ CRITICAL - Immediate Action Required
@@ -183,7 +183,7 @@ DATA QUALITY INDICATORS:
    - Alerts handled: {total}
    - Mean Time to Acknowledge: {mttr_ack}
    - Mean Time to Resolve: {mttr_resolve}
-   - SLA compliance: {sla_percentage}%
+   - KPI compliance: {kpi_percentage}%
    - Escalation rate: {escalation_rate}%
 ```
 
@@ -201,7 +201,7 @@ def calculate_shift_kpis(alerts: List[dict]) -> dict:
         "first_time_fix_rate": calculate_ftf_rate(alerts),
         "escalation_rate": len([a for a in alerts if a['escalated']]) / len(alerts),
         "repeat_alert_rate": calculate_repeat_rate(alerts),
-        "sla_compliance": calculate_sla_compliance(alerts),
+        "kpi_compliance": calculate_kpi_compliance(alerts),
         "peak_alert_time": identify_peak_period(alerts),
         "alert_per_hour": len(alerts) / shift_hours
     }
@@ -263,9 +263,9 @@ def generate_predictive_insights(historical_data: List[dict]) -> dict:
 
 ### Recommended Subject Line Format:
 ```
-🟢 NOC Morning Shift Report | 2025-10-14 | 3 Active | 12 Resolved | SLA: 98%
-🟡 NOC Evening Shift Report | 2025-10-14 | 5 Active | 8 Resolved | SLA: 95%
-🔴 NOC Night Shift Report | 2025-10-14 | 8 Active | 2 Resolved | SLA: 87%
+🟢 NOC Morning Shift Report | 2025-10-14 | 3 Active | 12 Resolved | KPI: 98%
+🟡 NOC Evening Shift Report | 2025-10-14 | 5 Active | 8 Resolved | KPI: 95%
+🔴 NOC Night Shift Report | 2025-10-14 | 8 Active | 2 Resolved | KPI: 87%
 ```
 
 **Benefits**: Status at a glance, searchable, consistent format
@@ -295,7 +295,7 @@ def generate_predictive_insights(historical_data: List[dict]) -> dict:
 4. Enhance logging to track which extraction path was used
 
 ### Phase 2 (Short-term - Week 2-3):
-1. Implement KPI calculations (MTTR, SLA compliance)
+1. Implement KPI calculations (MTTR, KPI compliance)
 2. Add shift handover protocol validation
 3. Refactor fallback logic for better debugging
 4. Add alert cache with TTL

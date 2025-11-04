@@ -1,46 +1,56 @@
-2025-10-07 10:20:18,486 - msteamdev.crew - INFO - Found email noc@infopro.com.my for user ID PS0Q6LE
-2025-10-07 10:20:18,758 - msteamdev.crew - INFO - Starting optimized background processing for incident 384
-2025-10-07 10:20:18,759 - msteamdev.crew - INFO - Holding alert 384 for 176 seconds before escalation decision (optimized)
-2025-10-07 10:20:18,759 - msteamdev.crew - INFO - Starting CrewAI execution: check_and_acknowledge_alert_task
-2025-10-07 10:20:18,759 - msteamdev.crew - INFO - CrewAI execution completed in 0.00 seconds
-2025-10-07 10:20:18,759 - msteamdev.crew - INFO - Scheduled optimized acknowledgment check for incident 384
-2025-10-07 10:20:18,760 - msteamdev.crew - INFO - Processing alert: 384
-2025-10-07 10:20:18,760 - msteamdev.crew - INFO - Scheduling acknowledgment check for incident 384 in 60 seconds
-2025-10-07 10:20:18,760 - msteamdev.crew - INFO - Webhook received. Handed off incident 384 to optimized background processor.
-2025-10-07 10:21:18,823 - msteamdev.crew - INFO - Loaded 0 optimized tools for action_recommender agent
-2025-10-07 10:21:18,824 - msteamdev.crew - INFO - Created action_recommender agent with 0 tools
-2025-10-07 10:21:18,824 - msteamdev.crew - INFO - Loaded 2 optimized tools for escalation_checker agent
-2025-10-07 10:21:18,825 - msteamdev.crew - INFO - Created escalation_checker agent with 2 tools
-2025-10-07 10:21:18,825 - msteamdev.crew - INFO - Loaded 0 optimized tools for communicator agent
-2025-10-07 10:21:18,826 - msteamdev.crew - INFO - Created communicator agent with 0 tools
-2025-10-07 10:21:18,826 - msteamdev.crew - INFO - Loaded 3 optimized tools for reporter agent
-2025-10-07 10:21:18,827 - msteamdev.crew - INFO - Created reporter agent with 3 tools
-2025-10-07 10:21:18,827 - msteamdev.crew - INFO - Loaded 2 optimized tools for pagerduty_manager agent
-2025-10-07 10:21:18,828 - msteamdev.crew - INFO - Created pagerduty_manager agent with 2 tools
-2025-10-07 10:21:18,828 - msteamdev.crew - INFO - Loaded 5 optimized agents with total 7 tools
-2025-10-07 10:21:18,867 - root - ERROR - LiteLLM call failed: litellm.BadRequestError: LLM Provider NOT provided. Pass in the LLM provider you are trying to call. You passed model=google/gemini-1.5-flash
- Pass model as E.g. For 'Huggingface' inference endpoints pass in `completion(model='huggingface/starcoder',..)` Learn more: https://docs.litellm.ai/docs/providers
-2025-10-07 10:21:18,895 - msteamdev.crew - ERROR - Attempt 1/3 failed for incident 384: litellm.BadRequestError: LLM Provider NOT provided. Pass in the LLM provider you are trying to call. You passed model=google/gemini-1.5-flash
- Pass model as E.g. For 'Huggingface' inference endpoints pass in `completion(model='huggingface/starcoder',..)` Learn more: https://docs.litellm.ai/docs/providers
-2025-10-07 10:21:19,579 - crewai.telemetry.telemetry - ERROR - HTTPSConnectionPool(host='telemetry.crewai.com', port=4319): Max retries exceeded with url: /v1/traces (Caused by NewConnectionError('<urllib3.connection.HTTPSConnection object at 0x7fdefc64a390>: Failed to establish a new connection: [Errno 111] Connection refused'))
-2025-10-07 10:21:19,914 - root - ERROR - LiteLLM call failed: litellm.BadRequestError: LLM Provider NOT provided. Pass in the LLM provider you are trying to call. You passed model=google/gemini-1.5-flash
- Pass model as E.g. For 'Huggingface' inference endpoints pass in `completion(model='huggingface/starcoder',..)` Learn more: https://docs.litellm.ai/docs/providers
-2025-10-07 10:21:19,931 - msteamdev.crew - ERROR - Attempt 2/3 failed for incident 384: litellm.BadRequestError: LLM Provider NOT provided. Pass in the LLM provider you are trying to call. You passed model=google/gemini-1.5-flash
- Pass model as E.g. For 'Huggingface' inference endpoints pass in `completion(model='huggingface/starcoder',..)` Learn more: https://docs.litellm.ai/docs/providers
-2025-10-07 10:21:22,010 - root - ERROR - LiteLLM call failed: litellm.BadRequestError: LLM Provider NOT provided. Pass in the LLM provider you are trying to call. You passed model=google/gemini-1.5-flash
- Pass model as E.g. For 'Huggingface' inference endpoints pass in `completion(model='huggingface/starcoder',..)` Learn more: https://docs.litellm.ai/docs/providers
-2025-10-07 10:21:22,028 - msteamdev.crew - ERROR - Attempt 3/3 failed for incident 384: litellm.BadRequestError: LLM Provider NOT provided. Pass in the LLM provider you are trying to call. You passed model=google/gemini-1.5-flash
- Pass model as E.g. For 'Huggingface' inference endpoints pass in `completion(model='huggingface/starcoder',..)` Learn more: https://docs.litellm.ai/docs/providers
-2025-10-07 10:21:22,028 - msteamdev.crew - ERROR - Acknowledgment task via optimized agents failed for incident 384: litellm.BadRequestError: LLM Provider NOT provided. Pass in the LLM provider you are trying to call. You passed model=google/gemini-1.5-flash
- Pass model as E.g. For 'Huggingface' inference endpoints pass in `completion(model='huggingface/starcoder',..)` Learn more: https://docs.litellm.ai/docs/providers. Attempting direct PagerDuty API call.
-2025-10-07 10:21:24,036 - msteamdev.crew - INFO - Found incident: 384
-2025-10-07 10:21:24,587 - crewai.telemetry.telemetry - ERROR - HTTPSConnectionPool(host='telemetry.crewai.com', port=4319): Max retries exceeded with url: /v1/traces (Caused by NewConnectionError('<urllib3.connection.HTTPSConnection object at 0x7fdefc6de810>: Failed to establish a new connection: [Errno 111] Connection refused'))
-2025-10-07 10:21:26,584 - msteamdev.crew - INFO - Found incident: 384
-2025-10-07 10:23:19,663 - msteamdev.crew - INFO - Escalation pipeline triggered for incident 384 (optimized)
-2025-10-07 10:23:19,679 - root - INFO - Loading alert log from file: /home/crewai/msteamdev/src/msteamdev/alert_log.json
-2025-10-07 10:23:19,689 - msteamdev.crew - INFO - Knowledge base insights gathered for incident 384
-2025-10-07 10:23:19,715 - root - ERROR - LiteLLM call failed: litellm.BadRequestError: LLM Provider NOT provided. Pass in the LLM provider you are trying to call. You passed model=google/gemini-1.5-flash
- Pass model as E.g. For 'Huggingface' inference endpoints pass in `completion(model='huggingface/starcoder',..)` Learn more: https://docs.litellm.ai/docs/providers
-2025-10-07 10:23:19,727 - msteamdev.crew - ERROR - Tiered decision pipeline failed for incident 384: litellm.BadRequestError: LLM Provider NOT provided. Pass in the LLM provider you are trying to call. You passed model=google/gemini-1.5-flash
- Pass model as E.g. For 'Huggingface' inference endpoints pass in `completion(model='huggingface/starcoder',..)` Learn more: https://docs.litellm.ai/docs/providers
-2025-10-07 10:23:19,728 - msteamdev.crew - INFO - Optimized CrewAI pipeline for incident 384 finished in 180.97 seconds.
+2025-11-04 09:09:08,908 - msteamdev.crew - INFO - Found email noc@infopro.com.my for user ID PS0Q6LE
+2025-11-04 09:09:10,340 - msteamdev.tools.otobo_ticket_store - INFO - Created new OTOBO ticket mapping: incident 429 -> ticket 1393
+2025-11-04 09:09:10,341 - msteamdev.crew - INFO - Starting optimized background processing for incident 429
+2025-11-04 09:09:10,341 - msteamdev.crew - INFO - Webhook received. Handed off incident 429 to optimized background processor.
+2025-11-04 09:09:10,343 - msteamdev.crew - INFO - Holding alert 429 for 176 seconds before escalation decision (optimized)
+2025-11-04 09:09:10,343 - msteamdev.crew - INFO - Starting CrewAI execution: check_and_acknowledge_alert_task
+2025-11-04 09:09:10,343 - msteamdev.crew - INFO - CrewAI execution completed in 0.00 seconds
+2025-11-04 09:09:10,343 - msteamdev.crew - INFO - Scheduled optimized acknowledgment check for incident 429
+2025-11-04 09:09:10,343 - msteamdev.crew - INFO - Processing alert: 429
+2025-11-04 09:09:10,343 - msteamdev.crew - INFO - Scheduling acknowledgment check for incident 429 in 60 seconds
+2025-11-04 09:09:38,502 - msteamdev.crew - INFO - Found email noc@infopro.com.my for user ID PS0Q6LE
+2025-11-04 09:09:39,255 - msteamdev.tools.otobo_ticket_store - INFO - Created new OTOBO ticket mapping: incident 428 -> ticket 1394
+2025-11-04 09:09:39,256 - msteamdev.crew - INFO - Starting optimized background processing for incident 428
+2025-11-04 09:09:39,256 - msteamdev.crew - INFO - Webhook received. Handed off incident 428 to optimized background processor.
+2025-11-04 09:09:39,258 - msteamdev.crew - INFO - Holding alert 428 for 0 seconds before escalation decision (optimized)
+2025-11-04 09:09:39,258 - msteamdev.crew - INFO - Starting CrewAI execution: check_and_acknowledge_alert_task
+2025-11-04 09:09:39,258 - msteamdev.crew - INFO - CrewAI execution completed in 0.00 seconds
+2025-11-04 09:09:39,258 - msteamdev.crew - INFO - Scheduled optimized acknowledgment check for incident 428
+2025-11-04 09:09:39,258 - msteamdev.crew - INFO - Processing alert: 428
+2025-11-04 09:09:39,258 - msteamdev.crew - INFO - Scheduling acknowledgment check for incident 428 in 60 seconds
+2025-11-04 09:09:39,258 - msteamdev.crew - INFO - Escalation pipeline triggered for incident 428 (optimized)
+2025-11-04 09:09:39,278 - root - INFO - Loading alert log from file: /home/crewai/msteamdev/src/msteamdev/alert_log.json
+2025-11-04 09:09:39,284 - msteamdev.crew - INFO - Loaded 0 optimized tools for action_recommender agent
+2025-11-04 09:09:39,285 - msteamdev.crew - INFO - Created action_recommender agent with 0 tools
+2025-11-04 09:09:39,285 - msteamdev.crew - INFO - Loaded 2 optimized tools for escalation_checker agent
+2025-11-04 09:09:39,286 - msteamdev.crew - INFO - Created escalation_checker agent with 2 tools
+2025-11-04 09:09:39,286 - msteamdev.crew - INFO - Loaded 0 optimized tools for communicator agent
+2025-11-04 09:09:39,286 - msteamdev.crew - INFO - Created communicator agent with 0 tools
+2025-11-04 09:09:39,287 - msteamdev.crew - INFO - Loaded 3 optimized tools for reporter agent
+2025-11-04 09:09:39,288 - msteamdev.crew - INFO - Created reporter agent with 3 tools
+2025-11-04 09:09:39,288 - msteamdev.crew - INFO - Loaded 2 optimized tools for pagerduty_manager agent
+2025-11-04 09:09:39,288 - msteamdev.crew - INFO - Created pagerduty_manager agent with 2 tools
+2025-11-04 09:09:39,289 - msteamdev.crew - INFO - Loaded 5 optimized agents with total 7 tools
+2025-11-04 09:09:39,298 - msteamdev.crew - INFO - Refreshed KB patterns cache
+2025-11-04 09:09:39,303 - msteamdev.crew - INFO - Knowledge base insights gathered for incident 428
+2025-11-04 09:09:39,304 - msteamdev.crew - ERROR - Tiered decision pipeline failed for incident 428: 'priority'
+2025-11-04 09:09:39,304 - msteamdev.crew - INFO - Optimized CrewAI pipeline for incident 428 finished in 0.05 seconds.
+2025-11-04 09:09:41,058 - msteamdev.crew - INFO - Found email noramin@infopro.com.my for user ID PPOGGAJ
+2025-11-04 09:09:43,015 - msteamdev.tools.otobo_ticket_store - INFO - Updated timestamp for OTOBO ticket mapping: incident 428
+2025-11-04 09:10:13,756 - crewai.telemetry.telemetry - ERROR - HTTPSConnectionPool(host='telemetry.crewai.com', port=4319): Max retries exceeded with url: /v1/traces (Caused by NewConnectionError('<urllib3.connection.HTTPSConnection object at 0x7f895d3e3a10>: Failed to establish a new connection: [Errno 111] Connection refused'))
+2025-11-04 09:10:18,762 - crewai.telemetry.telemetry - ERROR - HTTPSConnectionPool(host='telemetry.crewai.com', port=4319): Max retries exceeded with url: /v1/traces (Caused by NewConnectionError('<urllib3.connection.HTTPSConnection object at 0x7f895c215f50>: Failed to establish a new connection: [Errno 111] Connection refused'))
+2025-11-04 09:10:20,949 - msteamdev.crew - INFO - Found email noramin@infopro.com.my for user ID PPOGGAJ
+2025-11-04 09:10:22,041 - msteamdev.crew - INFO - Raw acknowledgment task result for incident 429: Status report for incident 429:
+- Current incident status: triggered (before acknowledgment)
+- Acknowledgment result: acknowledged
+- API interaction summary:
+    - GetIncidentStatus for incident 429: Success. Status was 'triggered'.
+    - AcknowledgeIncident for incident 429: Success. Incident acknowledged at 2025-11-04T01:10:18Z.
+- Any errors or warnings: None
+- Next recommended actions: Update internal tracking and cache for incident 429. Log all actions for audit trail.
+2025-11-04 09:10:23,768 - crewai.telemetry.telemetry - ERROR - HTTPSConnectionPool(host='telemetry.crewai.com', port=4319): Max retries exceeded with url: /v1/traces (Caused by NewConnectionError('<urllib3.connection.HTTPSConnection object at 0x7f895f4a9f10>: Failed to establish a new connection: [Errno 111] Connection refused'))
+2025-11-04 09:12:06,646 - msteamdev.crew - INFO - Escalation pipeline triggered for incident 429 (optimized)
+2025-11-04 09:12:06,646 - root - INFO - Loading alert log from file: /home/crewai/msteamdev/src/msteamdev/alert_log.json
+2025-11-04 09:12:06,662 - msteamdev.crew - INFO - Knowledge base insights gathered for incident 429
+2025-11-04 09:12:06,662 - msteamdev.crew - ERROR - Tiered decision pipeline failed for incident 429: 'priority'
+2025-11-04 09:12:06,663 - msteamdev.crew - INFO - Optimized CrewAI pipeline for incident 429 finished in 176.32 seconds.

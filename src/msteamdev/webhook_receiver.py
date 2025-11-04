@@ -719,7 +719,8 @@ async def receive_alert(request: Request):
                 "incident_number": incident_number,
                 "title": title,
                 "original_metric": title,
-                "from_email": from_email
+                "from_email": from_email,
+                "priority": data.get("priority", {}).get("summary", "medium").lower() # Extract priority with default
             }
 
             webhook_logger.info(f"Processed alert: {json.dumps(alert, indent=2)}")

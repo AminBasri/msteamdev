@@ -10,7 +10,7 @@ This system provides comprehensive weekly reporting capabilities for NOC operati
 - **Purpose**: Stores daily shift metrics to JSON files for weekly aggregation
 - **Location**: `data/daily_metrics/` directory
 - **Format**: `YYYY-MM-DD_shift_metrics.json` (e.g., `2025-10-24_morning_metrics.json`)
-- **Data Structure**: Comprehensive metrics including alerts, timing, SLA compliance, and incident details
+- **Data Structure**: Comprehensive metrics including alerts, timing, KPI compliance, and incident details
 
 ### 2. Weekly Report Generator (`weekly_report_generator.py`)
 - **Purpose**: Aggregates daily metrics and generates detailed weekly reports
@@ -18,7 +18,7 @@ This system provides comprehensive weekly reporting capabilities for NOC operati
   - Trend analysis across the week
   - Performance assessment with recommendations
   - Detailed breakdown by day and shift
-  - SLA compliance analysis
+  - KPI compliance analysis
   - Critical alert tracking
 
 ### 3. Integration with Daily Reports (`daily_report.py`)
@@ -29,21 +29,21 @@ This system provides comprehensive weekly reporting capabilities for NOC operati
 ## Key Features
 
 ### Daily Metrics Storage
-- **Comprehensive Data**: Total alerts, incidents, timing metrics, SLA compliance
+- **Comprehensive Data**: Total alerts, incidents, timing metrics, KPI compliance
 - **Incident Details**: Full incident information for detailed analysis
 - **Metadata**: Generation timestamps, data versioning
 - **Error Resilience**: Graceful handling of storage failures
 
 ### Weekly Report Analysis
 - **Aggregated Metrics**: Week-long totals and averages
-- **Trend Analysis**: Alert volume, SLA compliance, resolution rates
+- **Trend Analysis**: Alert volume, KPI compliance, resolution rates
 - **Performance Assessment**: Automated performance grading (🟢 Excellent, 🟡 Good, 🔴 Needs Improvement)
 - **Recommendations**: Actionable insights based on performance data
 - **Daily Breakdown**: Individual day performance within the week
 
-### SLA Compliance Tracking
-- **Overall SLA**: MTTA/MTTFR compliance with 5-minute threshold
-- **Severity-based SLA**: S2 (8h resolution) and S3 (24h resolution) compliance
+### KPI Compliance Tracking
+- **Overall KPI**: MTTA/MTTFR compliance with 5-minute threshold
+- **Severity-based KPI**: S2 (8h resolution) and S3 (24h resolution) compliance
 - **Breach Analysis**: Detailed breach tracking and analysis
 
 ## Usage Examples
@@ -119,24 +119,24 @@ WEEKLY NOC REPORT | 2025-10-24 to 2025-10-24
    Average Acknowledgment Rate: 100.0%
    Average Escalation Rate: 42.9%
 
-5. WEEKLY SLA ANALYSIS:
+5. WEEKLY KPI ANALYSIS:
 --------------------------------------------------
-   Average SLA Compliance: 57.1% (MTTA/MTTFR - 5min threshold)
-   Total SLA Breaches: 3
-   Average S2 SLA Compliance: 100.0% (Critical - 8h resolution)
-   Average S3 SLA Compliance: 75.0% (Warning - 24h resolution)
+   Average KPI Compliance: 57.1% (MTTA/MTTFR - 5min threshold)
+   Total KPI Breaches: 3
+   Average S2 KPI Compliance: 100.0% (Critical - 8h resolution)
+   Average S3 KPI Compliance: 75.0% (Warning - 24h resolution)
 
 6. DAILY BREAKDOWN:
 --------------------------------------------------
    2025-10-24 (morning):
      Alerts: 7, Resolved: 5
-     SLA: 57.1%, Breaches: 3
+     KPI: 57.1%, Breaches: 3
      MTTA: 1454.6m, MTTR: 2042.2m
 
 7. TREND ANALYSIS:
 --------------------------------------------------
    Alert Volume Trend: decreasing
-   SLA Compliance Trend: declining
+   KPI Compliance Trend: declining
    Total Critical Alerts: 2
    Days with Critical Alerts: 1/1
 
@@ -144,13 +144,13 @@ WEEKLY NOC REPORT | 2025-10-24 to 2025-10-24
 --------------------------------------------------
    Overall Performance: 🔴 NEEDS IMPROVEMENT
    Key Metrics:
-     - SLA Compliance: 57.1% (Target: ≥90%)
+     - KPI Compliance: 57.1% (Target: ≥90%)
      - Resolution Rate: 71.4% (Target: ≥80%)
      - Escalation Rate: 42.9% (Lower is better)
 
 9. RECOMMENDATIONS:
 --------------------------------------------------
-   1. Focus on improving first response times to meet 5-minute SLA threshold
+   1. Focus on improving first response times to meet 5-minute KPI threshold
    2. Increase resolution rate through better incident management processes
    3. Review escalation policies to reduce unnecessary escalations
    4. Investigate root causes of critical alerts to prevent recurrence
@@ -178,10 +178,10 @@ WEEKLY NOC REPORT | 2025-10-24 to 2025-10-24
   "resolution_rate": 71.4,
   "acknowledgment_rate": 100.0,
   "escalation_rate": 42.9,
-  "sla_compliance": 57.1,
-  "sla_breaches": 3,
-  "s2_sla_compliance": 100.0,
-  "s3_sla_compliance": 75.0,
+  "kpi_compliance": 57.1,
+  "kpi_breaches": 3,
+  "s2_kpi_compliance": 100.0,
+  "s3_kpi_compliance": 75.0,
   "incident_details": [...],
   "generated_at": "2025-10-27T10:49:08.460Z",
   "data_version": "1.0"
@@ -194,7 +194,7 @@ WEEKLY NOC REPORT | 2025-10-24 to 2025-10-24
 - **Historical Analysis**: Track performance trends over time
 - **Data-Driven Decisions**: Make informed decisions based on aggregated metrics
 - **Performance Monitoring**: Identify areas for improvement
-- **Compliance Tracking**: Monitor SLA compliance across severity levels
+- **Compliance Tracking**: Monitor KPI compliance across severity levels
 
 ### For Operations Teams
 - **Automated Reporting**: No manual data collection required
@@ -213,7 +213,7 @@ The weekly report system seamlessly integrates with the existing daily report in
 
 1. **Daily Reports**: Automatically save metrics without affecting existing functionality
 2. **Alert Processing**: Uses the same alert data and KPI calculations
-3. **SLA Tracking**: Maintains consistency with existing SLA definitions
+3. **KPI Tracking**: Maintains consistency with existing KPI definitions
 4. **Error Handling**: Robust error handling ensures daily reports continue even if metrics storage fails
 
 ## Future Enhancements

@@ -3,11 +3,11 @@
 
 recommend_actions:
   description: >
-    Analyze the alert with title "{title}", severity "{severity}", metric "{metric}", and incident number "{incident_number}".
-    Generate specific, actionable remediation steps for this IT alert based on the severity, affected systems, 
+    Analyze the alert with title "{title}", priority "{priority}", metric "{metric}", and incident number "{incident_number}".
+    Generate specific, actionable remediation steps for this IT alert based on the priority, affected systems, 
     and proven troubleshooting methodologies. Focus on practical solutions that can be implemented quickly.
     
-    Provide 2-3 specific actions to address it, tailored to the alert's context and severity level.
+    Provide 2-3 specific actions to address it, tailored to the alert's context and priority level.
     For each step, provide a detailed breakdown including:
     - A clear description of the action.
     - A priority level (1-5).
@@ -31,7 +31,7 @@ evaluate_escalation:
 
     **Alert Context:**
     - Title: {title}
-    - Severity: {severity}
+    - Priority: {priority}
     - Incident: {incident_number}
     - Timestamp: {timestamp}
     - Metric: {metric}
@@ -52,14 +52,14 @@ notify_bau:
   description: >
     Compose a professional email for alert escalation with details:
     - Title: {title}
-    - Severity: {severity}
+    - Priority: {priority}
     - Metric: {metric}
     - Incident Number: {incident_number}
     - Reason: {reason}
     - Recommended Actions: {recommended_actions}
     
     Create a structured email notification that provides all necessary context for rapid incident response.
-    Use appropriate urgency indicators for the severity level and ensure the message is clear and actionable.
+    Use appropriate urgency indicators for the priority level and ensure the message is clear and actionable.
     
     The body should end with the following sign-off:
     "Best regards,
@@ -99,15 +99,16 @@ shift_report:
     KEY PERFORMANCE INDICATORS:
     - Mean Time to Acknowledge (MTTA): {mttr_acknowledge}
     - Mean Time to Resolve (MTTR): {mttr_resolve}
-    - Mean Time to First Response (MTTFR): {mttr_first_response}
     - Escalation Rate: {escalation_rate}
     - Resolution Rate: {resolution_rate}
     - Acknowledgment Rate: {acknowledgment_rate}
-    - SLA Compliance: {sla_compliance} (Acknowledgment compliance)
-    - SLA Breaches: {sla_breaches}
-    - Severity Distribution: {severity_distribution}
-    - S2 SLA Compliance: {s2_sla_compliance} (Critical alerts - 30min threshold)
-    - S3 SLA Compliance: {s3_sla_compliance} (Warning alerts - 60min threshold)
+    - KPI Compliance: {kpi_compliance} (Acknowledgment compliance)
+    - KPI Breaches: {kpi_breaches}
+    - Priority Distribution: {priority_distribution}
+    - P1 KPI Compliance: {p1_kpi_compliance} (Critical alerts - 5min threshold)
+    - P2 KPI Compliance: {p2_kpi_compliance} (High priority alerts - 10min threshold)
+    - P3 KPI Compliance: {p3_kpi_compliance} (Medium priority alerts - 15min threshold)
+    - P4 KPI Compliance: {p4_kpi_compliance} (Low priority alerts - 20min threshold)
 
     ALERT DETAILS (JSON format for structured parsing):
     {alert_details}
@@ -135,10 +136,10 @@ shift_report:
           - Shift overview: "This report provides a comprehensive overview of the Production NOC {shift_type} shift operations for the period of {shift_start} to {shift_end} (+08) in the Asia/Kuala_Lumpur timezone."
           - Overall Status: {report_status_text}
           - Critical actions needed: 0-3 specific actionable items based on active critical/escalated alerts
-          - Shift performance assessment: "Meeting SLAs" / "Below SLAs" / "Exceeding SLAs"
-            * Meeting SLAs: Resolution rate >80%, SLA compliance >90% (S2: 30min, S3: 60min thresholds)
-            * Below SLAs: Resolution rate <80% OR SLA compliance <90%
-            * Exceeding SLAs: Resolution rate >95%, SLA compliance >95%
+          - Shift performance assessment: "Meeting KPIs" / "Below KPIs" / "Exceeding KPIs"
+            * Meeting KPIs: Resolution rate >80%, KPI compliance >90% (P1: 5min, P2: 10min, P3: 15min, P4: 20min thresholds)
+            * Below KPIs: Resolution rate <80% OR KPI compliance <90%
+            * Exceeding KPIs: Resolution rate >95%, KPI compliance >95%
 
        b) PERFORMANCE ANALYSIS:
           Title: "**Performance Analysis:**"
@@ -157,14 +158,15 @@ shift_report:
             ```
             - Mean Time to Acknowledge (MTTA): {mttr_acknowledge}
             - Mean Time to Resolve (MTTR): {mttr_resolve}
-            - Mean Time to First Response (MTTFR): {mttr_first_response}
             - Escalation Rate: {escalation_rate}
             - Resolution Rate: {resolution_rate}
             - Acknowledgment Rate: {acknowledgment_rate}
-            - SLA Compliance: {sla_compliance} (Acknowledgment compliance)
-            - Severity Distribution: {severity_distribution}
-            - S2 SLA Compliance: {s2_sla_compliance} (Critical alerts - 30min threshold)
-            - S3 SLA Compliance: {s3_sla_compliance} (Warning alerts - 60min threshold)
+            - KPI Compliance: {kpi_compliance} (Acknowledgment compliance)
+            - Priority Distribution: {priority_distribution}
+            - P1 KPI Compliance: {p1_kpi_compliance} (Critical alerts - 5min threshold)
+            - P2 KPI Compliance: {p2_kpi_compliance} (High priority alerts - 10min threshold)
+            - P3 KPI Compliance: {p3_kpi_compliance} (Medium priority alerts - 15min threshold)
+            - P4 KPI Compliance: {p4_kpi_compliance} (Low priority alerts - 20min threshold)
             ```
           
           - Brief analysis of trends (if GetAlertTrends tool was used)
@@ -176,7 +178,7 @@ shift_report:
           - Group by priority: P1 (Critical), P2 (High), P3 (Medium), P4 (Low)
           - For each incident, extract from the JSON data and present as:
             - Incident #[number]: [title]
-              * Severity: [severity level]
+              * Priority: [priority level]
               * Status: [current status]
               * Timestamp: [formatted timestamp]
               * Escalation: [escalation status]
@@ -197,7 +199,7 @@ shift_report:
           - Group by priority
           - For each resolved incident, extract from the JSON data and present as:
             - Incident #[number]: [title]
-              * Severity: [severity level]
+              * Priority: [priority level]
               * Status: [current status]
               * Timestamp: [formatted timestamp]
               * Time to Resolve: [Calculate from alert_details JSON if timestamps available]
@@ -314,8 +316,8 @@ shift_report:
        - Auto-populated by the framework based on:
          * generation_timestamp: Current UTC timestamp
          * alert_count: Number of alerts processed
-         * critical_alerts: Count of critical severity alerts
-         * sla_breaches: Count of incidents exceeding SLA
+         * critical_alerts: Count of critical priority alerts
+         * kpi_breaches: Count of incidents exceeding KPI
          * mttr_minutes: Mean time to resolution in minutes
        - You don't need to manually create this; it's injected by the reporting system
 
@@ -377,16 +379,15 @@ weekly_report:
     WEEKLY AVERAGE METRICS:
     - Average MTTA: {avg_mtta_minutes:.1f}m
     - Average MTTR: {avg_mttr_minutes:.1f}m
-    - Average MTTFR: {avg_mttfr_minutes:.1f}m
     - Average Resolution Rate: {avg_resolution_rate:.1f}%
     - Average Acknowledgment Rate: {avg_acknowledgment_rate:.1f}%
     - Average Escalation Rate: {avg_escalation_rate:.1f}%
     
-    WEEKLY SLA ANALYSIS:
-    - Average SLA Compliance: {avg_sla_compliance:.1f}% (MTTA/MTTFR - 5min threshold)
-    - Total SLA Breaches: {total_sla_breaches}
-    - Average S2 SLA Compliance: {avg_s2_sla_compliance:.1f}% (Critical - 8h resolution)
-    - Average S3 SLA Compliance: {avg_s3_sla_compliance:.1f}% (Warning - 24h resolution)
+    WEEKLY KPI ANALYSIS:
+    - Average KPI Compliance: {avg_kpi_compliance:.1f}% (MTTA - 5min threshold)
+    - Total KPI Breaches: {total_kpi_breaches}
+    - Average P2 KPI Compliance: {avg_p2_kpi_compliance:.1f}% (Critical - 8h resolution)
+    - Average P3 KPI Compliance: {avg_p3_kpi_compliance:.1f}% (Warning - 24h resolution)
     
     DAILY BREAKDOWN DATA:
     {daily_breakdown_data}
@@ -421,12 +422,12 @@ weekly_report:
             * Total Alerts Processed: {total_alerts}
             * Total Incidents Managed: {total_incidents}
             * Resolution Success Rate: {avg_resolution_rate:.1f}%
-            * SLA Compliance: {avg_sla_compliance:.1f}%
+            * KPI Compliance: {avg_kpi_compliance:.1f}%
             * Escalation Rate: {avg_escalation_rate:.1f}%
           
           - Performance Trends Analysis:
             * Alert Volume Trends: {alert_volume_trend}
-            * SLA Compliance Trends: {sla_compliance_trend}
+            * KPI Compliance Trends: {kpi_compliance_trend}
             * Resolution Rate Trends: {resolution_rate_trend}
             * Critical Alert Patterns: {critical_alert_analysis}
     
@@ -436,19 +437,19 @@ weekly_report:
           Analyze the daily_breakdown_data to provide:
           - Day-by-day performance summary
           - Peak and low activity days
-          - Daily SLA compliance variations
+          - Daily KPI compliance variations
           - Notable incidents or patterns by day
           - Weekend vs weekday performance comparison (if applicable)
     
-       d) SLA COMPLIANCE DEEP DIVE:
-          Title: "**SLA Compliance Analysis:**"
+       d) KPI COMPLIANCE DEEP DIVE:
+          Title: "**KPI Compliance Analysis:**"
           
-          - Overall SLA Performance: {avg_sla_compliance:.1f}% vs Target (90%)
-          - S2 SLA Performance: {avg_s2_sla_compliance:.1f}% vs Target (90%)
-          - S3 SLA Performance: {avg_s3_sla_compliance:.1f}% vs Target (90%)
-          - Total SLA Breaches: {total_sla_breaches}
-          - Breach Analysis: Identify patterns in SLA breaches
-          - Improvement Opportunities: Specific recommendations for SLA improvement
+          - Overall KPI Performance: {avg_kpi_compliance:.1f}% vs Target (90%)
+          - P2 KPI Performance: {avg_p2_kpi_compliance:.1f}% vs Target (90%)
+          - P3 KPI Performance: {avg_p3_kpi_compliance:.1f}% vs Target (90%)
+          - Total KPI Breaches: {total_kpi_breaches}
+          - Breach Analysis: Identify patterns in KPI breaches
+          - Improvement Opportunities: Specific recommendations for KPI improvement
     
        e) OPERATIONAL INSIGHTS & RECOMMENDATIONS:
           Title: "**Operational Insights & Strategic Recommendations:**"
@@ -487,7 +488,7 @@ weekly_report:
           
           - Immediate Actions (1-3 items):
             * Address critical issues identified
-            * Implement quick wins for SLA improvement
+            * Implement quick wins for KPI improvement
             * Resolve ongoing escalations
           
           - Medium-term Initiatives (1-3 items):

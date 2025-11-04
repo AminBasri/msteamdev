@@ -74,19 +74,19 @@ escalation_rate = (escalated_alerts / total_alerts) * 100
 acknowledgment_rate = (acknowledged_alerts / total_alerts) * 100
 ```
 
-## SLA Compliance
+## KPI Compliance
 
-### SLA Breach Rate
+### KPI Breach Rate
 
-**Definition**: Percentage of alerts that breached their SLA targets.
+**Definition**: Percentage of alerts that breached their KPI targets.
 
 **Fields Used**:
-- `sla_breach_at`: Timestamp when SLA was breached
-- Total alerts with defined SLAs
+- `kpi_breach_at`: Timestamp when KPI was breached
+- Total alerts with defined KPIs
 
 **Calculation**:
 ```python
-sla_compliance = ((total_with_sla - breached) / total_with_sla) * 100
+kpi_compliance = ((total_with_kpi - breached) / total_with_kpi) * 100
 ```
 
 ## Data Quality Metrics
@@ -398,8 +398,8 @@ Common issues and solutions:
    - Check shift time boundaries
    - Confirm alert state transitions
 
-3. SLA calculation issues
-   - Validate SLA configuration
+3. KPI calculation issues
+   - Validate KPI configuration
    - Check breach time recording
    - Verify timezone handling
 

@@ -35,7 +35,7 @@ from src.msteamdev.models import (
 from src.msteamdev.crew import load_agents, load_yaml
 from src.msteamdev.tools.alert_cache import ALERT_CACHE
 from src.msteamdev.tools.report_metrics import REPORT_METRICS, ReportGenerationMetric
-from src.msteamdev.severity_config import SeverityConfig
+from src.msteamdev.priority_config import PriorityConfig
 from src.msteamdev.daily_metrics_storage import daily_storage, create_daily_metrics_from_kpis
 
 class ShiftConfig:
@@ -278,22 +278,22 @@ def check_resolution_status(alert: dict, delay_minutes: int) -> bool:
     return False
 
 
-def build_incident_states(alerts: List[dict], incident_numbers_in_window: set) -> Dict[str, Dict]:
+def build_alert_states(alerts: List[dict], alert_numbers_in_window: set) -> Dict[str, Dict]:
     """
-    Build comprehensive incident state tracking with timing information.
+    Build comprehensive alert state tracking with timing information.
     
     Args:
         alerts: All alerts from alert_log.json
-        incident_numbers_in_window: Set of incident numbers in the shift window
+        alert_numbers_in_window: Set of alert numbers in the shift window
         
     Returns:
-        Dictionary mapping incident numbers to their state tracking data
+        Dictionary mapping alert numbers to their state tracking data
     """
-    incident_states = {}
+    alert_states = {}
     
     for alert in alerts:
         inc_num = str(alert.get('incident_number'))
-        if inc_num not in incident_numbers_in_window:
+        if inc_num not in alert_numbers_in_window:
             continue
             
         status = alert.get("status", "").lower()
@@ -303,17 +303,17 @@ def build_incident_states(alerts: List[dict], incident_numbers_in_window: set) -
         except ValueError:
             continue
         
-        if inc_num not in incident_states:
-            incident_states[inc_num] = {
+        if inc_num not in alert_states:
+            alert_states[inc_num] = {
                 'triggered_at': None,
                 'acknowledged_at': None,
                 'resolved_at': None,
-                'severity': alert.get("severity", "").lower(),
+                'priority': alert.get("priority", "").lower(),
                 'final_status': status,
                 'all_statuses': []
             }
         
-        state = incident_states[inc_num]
+        state = alert_states[inc_num]
         state['all_statuses'].append((status, timestamp))
         state['final_status'] = status  # Keep updating to get final status
         
@@ -325,7 +325,7 @@ def build_incident_states(alerts: List[dict], incident_numbers_in_window: set) -
         elif status == 'resolved':
             state['resolved_at'] = timestamp  # Keep updating to get final resolution time
     
-    return incident_states
+    return alert_states
 
 
 def calculate_time_to_resolve(triggered_at: arrow.arrow.Arrow, resolved_at: arrow.arrow.Arrow) -> str:
@@ -392,33 +392,27 @@ def create_alert_details_with_timing(alerts: List[dict], incident_states: Dict[s
             # Extract timing information from state tracking
             acknowledged_at = None
             resolved_at = None
-            first_response_at = None
             
             if state:
                 # Format timestamps for display
                 if state.get('acknowledged_at'):
                     acknowledged_at = to_local_str(state['acknowledged_at'])
-                    if not first_response_at:
-                        first_response_at = acknowledged_at
                 
                 if state.get('resolved_at'):
                     resolved_at = to_local_str(state['resolved_at'])
-                    if not first_response_at:
-                        first_response_at = resolved_at
             
             # Create AlertDetail with all timing information
             alert_summary.append(AlertDetail(
                 incident_number=int(alert.get('incident_number', 0)),
                 title=alert.get('title', 'Unknown'),
-                severity=alert.get('severity', 'Unknown').upper(),
+                priority=alert.get('priority', 'Unknown').upper(),
                 metric=alert.get('metric', 'Unknown'),
                 status=alert.get('status', 'Unknown'),
                 timestamp=alert_timestamp_local,
                 escalation_status=escalation_status,
                 escalation_reason=reason if not was_resolved else 'Resolved within delay period',
                 acknowledged_at=acknowledged_at,
-                resolved_at=resolved_at,
-                first_response_at=first_response_at
+                resolved_at=resolved_at
             ))
             
         except Exception as e:
@@ -428,7 +422,7 @@ def create_alert_details_with_timing(alerts: List[dict], incident_states: Dict[s
 
 
 def calculate_shift_kpis(alerts: List[dict], shift_start: arrow.arrow.Arrow, shift_end: arrow.arrow.Arrow) -> dict:
-    """Calculate key operational metrics for the shift."""
+    """Calculate key performance indicators for alert management during the shift."""
     logger.info(f"Calculating KPIs for {len(alerts)} alerts")
     
     if not alerts:
@@ -438,8 +432,8 @@ def calculate_shift_kpis(alerts: List[dict], shift_start: arrow.arrow.Arrow, shi
             "unique_alerts": 0,
             "resolved_alerts": 0,
             "acknowledged_alerts": 0,
-            "critical_alerts": 0,
-            "warning_alerts": 0,
+            "p1_alerts": 0,
+            "p2_alerts": 0,
             "escalated_alerts": 0,
             "resolution_rate": "0.0%",
             "acknowledgment_rate": "0.0%",
@@ -447,9 +441,9 @@ def calculate_shift_kpis(alerts: List[dict], shift_start: arrow.arrow.Arrow, shi
             "mean_time_to_resolve": "N/A",
             "mean_time_to_acknowledge": "N/A",
             "mean_time_to_first_response": "N/A",
-            "sla_breaches": 0,
-            "sla_compliance": "N/A",
-            "sla_compliance_percentage": "N/A"
+            "kpi_breaches": 0,
+            "kpi_compliance": "N/A",
+            "kpi_compliance_percentage": "N/A"
         }
     
     # Load all alerts to track full state progression
@@ -458,17 +452,17 @@ def calculate_shift_kpis(alerts: List[dict], shift_start: arrow.arrow.Arrow, shi
     # Track state transitions for each incident
     incident_states = {}
     
-    # First, identify which incidents are in our window
-    incident_numbers_in_window = set()
+    # First, identify which alerts are in our window
+    alert_numbers_in_window = set()
     for alert in alerts:
-        incident_numbers_in_window.add(str(alert.get('incident_number')))
+        alert_numbers_in_window.add(str(alert.get('incident_number')))
     
-    logger.info(f"Tracking state transitions for {len(incident_numbers_in_window)} incidents")
+    logger.info(f"Tracking state transitions for {len(alert_numbers_in_window)} alerts")
     
-    # Process all alerts to track state transitions for incidents in our window
+    # Process all alerts to track state transitions for alerts in our window
     for alert in all_alerts:
         inc_num = str(alert.get('incident_number'))
-        if inc_num not in incident_numbers_in_window:
+        if inc_num not in alert_numbers_in_window:
             continue
             
         status = alert.get("status", "").lower()
@@ -483,7 +477,7 @@ def calculate_shift_kpis(alerts: List[dict], shift_start: arrow.arrow.Arrow, shi
                 'triggered_at': None,
                 'acknowledged_at': None,
                 'resolved_at': None,
-                'severity': alert.get("severity", "").lower(),
+                'priority': alert.get("priority", "").lower(),
                 'final_status': status,
                 'all_statuses': []
             }
@@ -500,45 +494,98 @@ def calculate_shift_kpis(alerts: List[dict], shift_start: arrow.arrow.Arrow, shi
         elif status == 'resolved':
             state['resolved_at'] = timestamp  # Keep updating to get final resolution time
     
-    # Calculate metrics based on final states
+    from .priority_config import PriorityConfig
+
+    # Initialize priority-based metrics
+    priority_metrics = {
+        'P1': {'total': 0, 'resolved': 0, 'acknowledged': 0, 'kpi_breached': 0, 'ttr': [], 'tta': []},
+        'P2': {'total': 0, 'resolved': 0, 'acknowledged': 0, 'kpi_breached': 0, 'ttr': [], 'tta': []},
+        'P3': {'total': 0, 'resolved': 0, 'acknowledged': 0, 'kpi_breached': 0, 'ttr': [], 'tta': []},
+        'P4': {'total': 0, 'resolved': 0, 'acknowledged': 0, 'kpi_breached': 0, 'ttr': [], 'tta': []}
+    }
+    
+    # Calculate metrics based on final states with priority awareness
     unique_alerts = len(incident_states)
-    resolved_alerts = sum(1 for state in incident_states.values() if state['final_status'] == 'resolved')
-    acknowledged_alerts = sum(1 for state in incident_states.values() if state['final_status'] in ['acknowledged', 'resolved'])
-    active_alerts = sum(1 for state in incident_states.values() if state['final_status'] != 'resolved')
-    critical_alerts = sum(1 for state in incident_states.values() if state['severity'] == 'critical')
-    warning_alerts = sum(1 for state in incident_states.values() if state['severity'] == 'warning')
+    resolved_alerts = 0
+    acknowledged_alerts = 0
+    active_alerts = 0
+    tta_values = []   # Time to acknowledge
+    ttr_values = []   # Time to resolve
     
-    logger.info(f"Status summary:")
-    logger.info(f"  - Unique incidents: {unique_alerts}")
-    logger.info(f"  - Resolved: {resolved_alerts}")
-    logger.info(f"  - Acknowledged: {acknowledged_alerts}")
-    logger.info(f"  - Active: {active_alerts}")
-    logger.info(f"  - Critical: {critical_alerts}")
-    logger.info(f"  - Warning: {warning_alerts}")
+    for inc_num, state in incident_states.items():
+        # Use alert title for priority mapping
+        alert_for_mapping = {'priority': state['priority'], 'title': next((a.get('title', '') for a in alerts if str(a.get('incident_number')) == inc_num), '')}
+        priority_level = PriorityConfig.map_alert_priority(alert_for_mapping)
+        priority_metrics[priority_level]['total'] += 1
+        
+        # Track status by priority
+        if state['final_status'] == 'resolved':
+            priority_metrics[priority_level]['resolved'] += 1
+            resolved_alerts += 1
+        
+        if state['final_status'] in ['acknowledged', 'resolved']:
+            priority_metrics[priority_level]['acknowledged'] += 1
+            acknowledged_alerts += 1
+        
+        if state['final_status'] != 'resolved':
+            active_alerts += 1
+            
+        # Calculate timing metrics with KPI threshold checks
+        if state['triggered_at']:
+            threshold = PriorityConfig.get_kpi_threshold(priority_level)
+            
+            if state['acknowledged_at']:
+                tta = (state['acknowledged_at'] - state['triggered_at']).total_seconds() / 60
+                if tta >= 0:
+                    priority_metrics[priority_level]['tta'].append(tta)
+                    
+                    # Check acknowledgment KPI threshold
+                    if tta > threshold.get_acknowledgment_minutes():
+                        priority_metrics[priority_level]['kpi_breached'] += 1
+            
+            if state['resolved_at']:
+                ttr = (state['resolved_at'] - state['triggered_at']).total_seconds() / 60
+                if ttr >= 0:
+                    priority_metrics[priority_level]['ttr'].append(ttr)
+                        
+                    # Check resolution KPI threshold
+                    if ttr > (threshold.get_resolution_hours() * 60):  # Convert hours to minutes
+                        priority_metrics[priority_level]['kpi_breached'] += 1
     
-    # Calculate timing metrics
-    ttr_values = []  # Time to resolve
-    tta_values = []  # Time to acknowledge
-    ttfr_values = []  # Time to first response
+    logger.info(f"Alert Status Summary:")
+    logger.info(f"  - Total Unique Alerts: {unique_alerts}")
+    logger.info(f"  - Resolved Alerts: {resolved_alerts}")
+    logger.info(f"  - Acknowledged Alerts: {acknowledged_alerts}")
+    logger.info(f"  - Active Alerts: {active_alerts}")
+    
+    for priority, metrics in priority_metrics.items():
+        if metrics['total'] > 0:
+            logger.info(f"  {priority} Metrics:")
+            logger.info(f"    - Total: {metrics['total']}")
+            logger.info(f"    - Resolved: {metrics['resolved']}")
+            logger.info(f"    - Acknowledged: {metrics['acknowledged']}")
+            logger.info(f"    - KPI Breaches: {metrics['kpi_breached']}")
+            if metrics['tta']:
+                logger.info(f"    - Avg MTTA: {sum(metrics['tta']) / len(metrics['tta']):.1f}m")
+            if metrics['ttr']:
+                logger.info(f"    - Avg MTTR: {sum(metrics['ttr']) / len(metrics['ttr']):.1f}m")
     
     for inc_num, state in incident_states.items():
         if state['triggered_at']:
-            # Time to acknowledge
+            # Track response and resolution times
+
+            # Time to acknowledge (TTA)
             if state['acknowledged_at']:
                 tta = (state['acknowledged_at'] - state['triggered_at']).total_seconds() / 60
                 if tta >= 0:
                     tta_values.append(tta)
-                    ttfr_values.append(tta)  # First response was acknowledgment
                     logger.debug(f"Incident {inc_num}: TTA = {tta:.1f}m")
             
-            # Time to resolve
+            # Time to resolve (TTR)
             if state['resolved_at']:
                 ttr = (state['resolved_at'] - state['triggered_at']).total_seconds() / 60
                 if ttr >= 0:
                     ttr_values.append(ttr)
-                    # If resolved without acknowledgment, count as first response
-                    if not state['acknowledged_at']:
-                        ttfr_values.append(ttr)
                     logger.debug(f"Incident {inc_num}: TTR = {ttr:.1f}m")
     
     # Calculate escalations based on actual escalation records
@@ -557,98 +604,271 @@ def calculate_shift_kpis(alerts: List[dict], shift_start: arrow.arrow.Arrow, shi
     # Calculate averages
     mean_time_to_resolve = f"{sum(ttr_values) / len(ttr_values):.1f}m" if ttr_values else "N/A"
     mean_time_to_acknowledge = f"{sum(tta_values) / len(tta_values):.1f}m" if tta_values else "N/A"
-    mean_time_to_first_response = f"{sum(ttfr_values) / len(ttfr_values):.1f}m" if ttfr_values else "N/A"
     
-    # Overall SLA compliance (MTTA/MTTFR with 5-minute threshold)
-    acknowledgment_threshold = 5  # 5-minute threshold for acknowledgment/first response
-    total_sla_breaches = 0
-    total_sla_incidents = 0
+    # Priority-based weights for KPI calculation
+    PRIORITY_WEIGHTS = {
+        "P1": 0.4,  # Critical incidents have highest weight
+        "P2": 0.3,  # High priority
+        "P3": 0.2,  # Medium priority
+        "P4": 0.1   # Low priority
+    }
     
-    for inc_num, state in incident_states.items():
-        if state.get('triggered_at'):
-            # Calculate time to first response (acknowledgment or resolution)
-            first_response_time = None
-            if state.get('acknowledged_at'):
-                first_response_time = (state['acknowledged_at'] - state['triggered_at']).total_seconds() / 60
-            elif state.get('resolved_at'):
-                first_response_time = (state['resolved_at'] - state['triggered_at']).total_seconds() / 60
+    # Calculate weighted KPI compliance
+    weighted_compliance = 0.0
+    total_weight = 0.0
+    priority_compliances = {}
+    
+    for priority_level_str in PriorityConfig.get_all_priority_levels():
+        priority_alerts_for_kpi = []
+        for inc_num, state in incident_states.items():
+            # Get the original alert that corresponds to this incident state
+            # We need the title from the original alert to map priority
+            original_alert_title = next((a.get('title', '') for a in alerts if str(a.get('incident_number')) == inc_num), '')
             
-            if first_response_time is not None:
-                total_sla_incidents += 1
-                if first_response_time > acknowledgment_threshold:
-                    total_sla_breaches += 1
+            if PriorityConfig.map_alert_priority({'title': original_alert_title}) == priority_level_str:
+                priority_alerts_for_kpi.append(state)
+        
+        logger.info(f"Found {len(priority_alerts_for_kpi)} alerts for priority {priority_level_str}")
+        if not priority_alerts_for_kpi:
+            continue
+            
+        threshold = PriorityConfig.get_acknowledgment_threshold(priority_level_str)
+        breaches = 0
+        total = len(priority_alerts_for_kpi)  # Count all alerts of this priority
+        
+        for state in priority_alerts_for_kpi:
+            if state.get('triggered_at'):
+                first_response_time = None
+                if state.get('acknowledged_at'):
+                    first_response_time = (state['acknowledged_at'] - state['triggered_at']).total_seconds() / 60
+                elif state.get('resolved_at'):
+                    first_response_time = (state['resolved_at'] - state['triggered_at']).total_seconds() / 60
+                else:
+                    # For active alerts, check if current duration exceeds threshold
+                    if shift_end > state['triggered_at']:
+                        first_response_time = (shift_end - state['triggered_at']).total_seconds() / 60
+                
+                logger.info(f"  Alert {state.get('incident_number')}: Response time {first_response_time}m vs threshold {threshold}m")
+                if first_response_time is not None and first_response_time > threshold:
+                    breaches += 1
+        
+        if total > 0:
+            compliance = ((total - breaches) / total * 100)
+            priority_compliances[priority_level_str] = f"{compliance:.1f}%"  # Store with % symbol
+            weight = PRIORITY_WEIGHTS[priority_level_str]
+            weighted_compliance += compliance * weight
+            total_weight += weight
+            logger.info(f"Priority {priority_level_str} compliance: {compliance:.1f}% (weight: {weight}, breaches: {breaches}/{total})")
     
-    # Overall SLA compliance
-    overall_sla_compliance = f"{((total_sla_incidents - total_sla_breaches) / total_sla_incidents * 100):.1f}%" if total_sla_incidents > 0 else "N/A"
+    # Calculate overall weighted KPI compliance and per-priority compliances
+    # Store raw values and formatted values for KPI compliance
+    p1_compliance_raw = float(priority_compliances.get("P1", "0.0%").replace('%', ''))
+    p2_compliance_raw = float(priority_compliances.get("P2", "0.0%").replace('%', ''))
+    p3_compliance_raw = float(priority_compliances.get("P3", "0.0%").replace('%', ''))
+    p4_compliance_raw = float(priority_compliances.get("P4", "0.0%").replace('%', ''))
     
-    # Severity-based SLA metrics (Resolution thresholds)
-    sla_breaches_by_severity = {}
-    sla_compliance_by_severity = {}
+    overall_kpi_compliance = (
+        f"{(weighted_compliance / total_weight):.1f}%" if total_weight > 0 else "N/A"
+    )
     
-    # Calculate SLA compliance by severity level (for resolution)
-    for severity_level in SeverityConfig.get_all_severity_levels():
-        severity_alerts = [alert for alert in alerts if SeverityConfig.map_alert_severity(alert) == severity_level]
-        if not severity_alerts:
-            sla_breaches_by_severity[severity_level] = 0
-            sla_compliance_by_severity[severity_level] = "N/A"
+    logger.info(f"Overall KPI compliance: {overall_kpi_compliance}")
+    logger.info(f"P1 compliance: {p1_compliance_raw:.1f}%")
+    logger.info(f"P2 compliance: {p2_compliance_raw:.1f}%")
+    logger.info(f"P3 compliance: {p3_compliance_raw:.1f}%")
+    logger.info(f"P4 compliance: {p4_compliance_raw:.1f}%")
+    
+    # Priority-based KPI metrics (Resolution thresholds)
+    kpi_breaches_by_priority = {}
+    kpi_compliance_by_priority = {}
+    
+    # Calculate KPI compliance by priority level (for resolution)
+    for priority_level in PriorityConfig.get_all_priority_levels():
+        # Look at the title for priority/severity markers
+        priority_alerts = [alert for alert in alerts 
+                         if PriorityConfig.map_alert_priority({'title': alert.get('title', '')}) == priority_level]
+        
+        logger.info(f"\nCalculating compliance for {priority_level}:")
+        logger.info(f"Found {len(priority_alerts)} matching alerts")
+        
+        if not priority_alerts:
+            kpi_breaches_by_priority[priority_level] = 0
+            kpi_compliance_by_priority[priority_level] = "0.0%"
             continue
         
-        # Get resolution threshold for this severity level (in hours, convert to minutes)
-        resolution_threshold_hours = SeverityConfig.get_resolution_threshold(severity_level)
+        # Get resolution threshold for this priority level (in hours, convert to minutes)
+        resolution_threshold_hours = PriorityConfig.get_resolution_threshold(priority_level)
         resolution_threshold_minutes = resolution_threshold_hours * 60
         
-        # Calculate resolution breaches for this severity level
-        severity_ttr_values = []
-        for alert in severity_alerts:
+        # Calculate KPI compliance for this priority level
+        priority_breaches = 0
+        priority_total = len(priority_alerts)  # Consider all alerts of this priority
+        
+        for alert in priority_alerts:
             inc_num = str(alert.get('incident_number'))
             if inc_num in incident_states and incident_states[inc_num].get('triggered_at'):
                 state = incident_states[inc_num]
-                # Only count incidents that were resolved
+                
+                resolution_time = None
+                # For resolved alerts, check resolution time
                 if state.get('resolved_at'):
-                    ttr = (state['resolved_at'] - state['triggered_at']).total_seconds() / 60
-                    severity_ttr_values.append(ttr)
+                    resolution_time = (state['resolved_at'] - state['triggered_at']).total_seconds() / 60
+                # For active alerts, check if current duration exceeds threshold
+                elif shift_end > state['triggered_at']:
+                    resolution_time = (shift_end - state['triggered_at']).total_seconds() / 60
+                
+                logger.info(f"  Alert {inc_num}: Resolution time {resolution_time}m vs threshold {resolution_threshold_minutes}m")
+                
+                if resolution_time is not None and resolution_time > resolution_threshold_minutes:
+                    priority_breaches += 1
+                    logger.info(f"    KPI breach: {resolution_time}m > {resolution_threshold_minutes}m")
         
-        # Calculate breaches and compliance for this severity
-        severity_breaches = sum(1 for t in severity_ttr_values if t > resolution_threshold_minutes)
-        severity_total = len(severity_ttr_values)
-        severity_compliance = ((severity_total - severity_breaches) / severity_total * 100) if severity_total > 0 else 0
+        priority_compliance = ((priority_total - priority_breaches) / priority_total * 100) if priority_total > 0 else 0
+        logger.info(f"  Total breaches for {priority_level}: {priority_breaches}/{priority_total}")
+        logger.info(f"  Compliance: {priority_compliance:.1f}%")
         
-        sla_breaches_by_severity[severity_level] = severity_breaches
-        sla_compliance_by_severity[severity_level] = f"{severity_compliance:.1f}%"
+        # Store compliance value with % symbol for reporting
+        # Store compliance value with % symbol for reporting
+        kpi_breaches_by_priority[priority_level] = priority_breaches
+        kpi_compliance_by_priority[priority_level] = f"{priority_compliance:.1f}%"
+        
+        logger.info(f"Found {len(priority_alerts)} alerts for priority {priority}")
+        if not priority_alerts:
+            continue
+            
+        threshold = PriorityConfig.get_acknowledgment_threshold(priority)
+        breaches = 0
+        total = len(priority_alerts)  # Count all alerts of this priority
+        
+        for state in priority_alerts:
+            if state.get('triggered_at'):
+                first_response_time = None
+                if state.get('acknowledged_at'):
+                    first_response_time = (state['acknowledged_at'] - state['triggered_at']).total_seconds() / 60
+                elif state.get('resolved_at'):
+                    first_response_time = (state['resolved_at'] - state['triggered_at']).total_seconds() / 60
+                else:
+                    # For active alerts, check if current duration exceeds threshold
+                    if shift_end > state['triggered_at']:
+                        first_response_time = (shift_end - state['triggered_at']).total_seconds() / 60
+                
+                logger.info(f"  Alert {state.get('incident_number')}: Response time {first_response_time}m vs threshold {threshold}m")
+                if first_response_time is not None and first_response_time > threshold:
+                    breaches += 1
+        
+        if total > 0:
+            compliance = ((total - breaches) / total * 100)
+            priority_compliances[priority] = f"{compliance:.1f}%"  # Store with % symbol
+            weight = PRIORITY_WEIGHTS[priority]
+            weighted_compliance += compliance * weight
+            total_weight += weight
+            logger.info(f"Priority {priority} compliance: {compliance:.1f}% (weight: {weight}, breaches: {breaches}/{total})")
     
-    logger.info(f"Timing metrics:")
-    logger.info(f"  - MTTR: {mean_time_to_resolve}")
-    logger.info(f"  - MTTA: {mean_time_to_acknowledge}")
-    logger.info(f"  - MTTFR: {mean_time_to_first_response}")
-    logger.info(f"  - Overall SLA compliance: {overall_sla_compliance} (MTTA/MTTFR - 5min threshold)")
-    logger.info(f"  - Total SLA breaches: {total_sla_breaches}/{total_sla_incidents}")
+    # Calculate KPI compliance by priority level (for resolution)
+    for priority_level in PriorityConfig.get_all_priority_levels():
+        # Look at the title for priority/severity markers
+        priority_alerts = [alert for alert in alerts 
+                         if PriorityConfig.map_alert_priority({'title': alert.get('title', '')}) == priority_level]
+        
+        logger.info(f"\nCalculating compliance for {priority_level}:")
+        logger.info(f"Found {len(priority_alerts)} matching alerts")
+        
+        if not priority_alerts:
+            kpi_breaches_by_priority[priority_level] = 0
+            kpi_compliance_by_priority[priority_level] = "0.0%"
+            continue
+        
+        # Get resolution threshold for this priority level (in hours, convert to minutes)
+        resolution_threshold_hours = PriorityConfig.get_resolution_threshold(priority_level)
+        resolution_threshold_minutes = resolution_threshold_hours * 60
+        
+        # Calculate KPI compliance for this priority level
+        priority_breaches = 0
+        priority_total = len(priority_alerts)  # Consider all alerts of this priority
+        
+        for alert in priority_alerts:
+            inc_num = str(alert.get('incident_number'))
+            if inc_num in incident_states and incident_states[inc_num].get('triggered_at'):
+                state = incident_states[inc_num]
+                
+                resolution_time = None
+                # For resolved alerts, check resolution time
+                if state.get('resolved_at'):
+                    resolution_time = (state['resolved_at'] - state['triggered_at']).total_seconds() / 60
+                # For active alerts, check if current duration exceeds threshold
+                elif shift_end > state['triggered_at']:
+                    resolution_time = (shift_end - state['triggered_at']).total_seconds() / 60
+                
+                logger.info(f"  Alert {inc_num}: Resolution time {resolution_time}m vs threshold {resolution_threshold_minutes}m")
+                
+                if resolution_time is not None and resolution_time > resolution_threshold_minutes:
+                    priority_breaches += 1
+                    logger.info(f"    KPI breach: {resolution_time}m > {resolution_threshold_minutes}m")
+        
+        priority_compliance = ((priority_total - priority_breaches) / priority_total * 100) if priority_total > 0 else 0
+        logger.info(f"  Total breaches for {priority_level}: {priority_breaches}/{priority_total}")
+        logger.info(f"  Compliance: {priority_compliance:.1f}%")
+        
+        # Store compliance value with % symbol for reporting
+        # Store compliance value with % symbol for reporting
+        kpi_breaches_by_priority[priority_level] = priority_breaches
+        kpi_compliance_by_priority[priority_level] = f"{priority_compliance:.1f}%"
     
-    # Log severity-based SLA metrics (resolution)
-    for severity_level in SeverityConfig.get_all_severity_levels():
-        if sla_breaches_by_severity.get(severity_level, 0) > 0 or sla_compliance_by_severity.get(severity_level) != "N/A":
-            threshold_hours = SeverityConfig.get_resolution_threshold(severity_level)
-            logger.info(f"  - {severity_level} SLA: {sla_compliance_by_severity[severity_level]} ({sla_breaches_by_severity[severity_level]} breaches, {threshold_hours}h resolution threshold)")
+    logger.info(f"Alert Response Metrics:")
+    logger.info(f"  - Mean Time to Resolve (MTTR): {mean_time_to_resolve}")
+    logger.info(f"  - Mean Time to Acknowledge (MTTA): {mean_time_to_acknowledge}")
+    logger.info(f"  - Overall KPI Compliance (Weighted): {overall_kpi_compliance}")
+    
+    # Log priority-specific KPI metrics
+    for priority_level in PriorityConfig.get_all_priority_levels():
+        if priority_level in priority_compliances:
+            threshold_min = PriorityConfig.get_acknowledgment_threshold(priority_level)
+            weight = PRIORITY_WEIGHTS[priority_level]
+            logger.info(f"  - {priority_level} KPI: {priority_compliances[priority_level]} "
+                       f"(Weight: {weight*100:.0f}%, Threshold: {threshold_min}m)")
+    
+    # Calculate priority-specific metrics using our tracked timing data
+    priority_metrics = {}
+    for priority in PriorityConfig.get_all_priority_levels():
+        metrics = priority_metrics.get(priority, {})
+        metrics.update({
+            "total": len([a for a in alerts if PriorityConfig.map_alert_priority({'title': a.get('title', '')}) == priority]),
+            "breaches": kpi_breaches_by_priority.get(priority, 0),
+            "compliance": kpi_compliance_by_priority.get(priority, "0.0%"),
+            "resolution_threshold": f"{PriorityConfig.get_resolution_threshold(priority)}h",
+            "acknowledgment_threshold": f"{PriorityConfig.get_acknowledgment_threshold(priority)}m"
+        })
+        priority_metrics[priority] = metrics
+
+    # Log values for debugging
+    logger.info("Priority KPI Results:")
+    if priority_compliances:  # Only log if not empty
+        for p, c in priority_compliances.items():
+            logger.info(f"  {p}: {c}")
     
     return {
         "total_alerts": len(alerts),
         "unique_alerts": unique_alerts,
         "resolved_alerts": resolved_alerts,
         "acknowledged_alerts": acknowledged_alerts,
-        "critical_alerts": critical_alerts,
-        "warning_alerts": warning_alerts,
-        "escalated_alerts": escalated_alerts,
+        "critical_alerts": sum(1 for a in alerts if PriorityConfig.map_alert_priority({'title': a.get('title', '')}) == "P1"),
+        "warning_alerts": sum(1 for a in alerts if PriorityConfig.map_alert_priority({'title': a.get('title', '')}) == "P2"),
+        "escalated_alerts": len(escalated_alerts),
         "resolution_rate": f"{resolution_rate:.1f}%",
         "acknowledgment_rate": f"{ack_rate:.1f}%",
         "escalation_rate": f"{escalation_rate:.1f}%",
         "mean_time_to_resolve": mean_time_to_resolve,
         "mean_time_to_acknowledge": mean_time_to_acknowledge,
-        "mean_time_to_first_response": mean_time_to_first_response,
-        "sla_breaches": total_sla_breaches,
-        "sla_compliance": overall_sla_compliance,
-        "sla_compliance_percentage": overall_sla_compliance,
-        "sla_breaches_by_severity": sla_breaches_by_severity,
-        "sla_compliance_by_severity": sla_compliance_by_severity,
-        "severity_distribution": SeverityConfig.get_severity_stats(alerts)
+        "kpi_compliance": overall_kpi_compliance,
+        "kpi_compliance_percentage": overall_kpi_compliance,
+        "priority_metrics": priority_metrics,
+        "priority_compliances": {p: f"{c}" for p, c in priority_compliances.items()},  # Values already have % symbol
+        "priority_weights": PRIORITY_WEIGHTS,
+        "priority_distribution": PriorityConfig.get_priority_stats(alerts),
+        "kpi_compliance_by_priority": priority_compliances,  # Already formatted with % symbols
+        "p1_compliance": p1_compliance_raw,
+        "p2_compliance": p2_compliance_raw,
+        "p3_compliance": p3_compliance_raw,
+        "p4_compliance": p4_compliance_raw
     }
 
 
@@ -661,12 +881,12 @@ def create_metadata(alerts: Optional[List[Dict[str, Any]]] = None) -> ReportMeta
             generation_timestamp=now.isoformat(),
             alert_count=0,
             critical_alerts=0,
-            sla_breaches=0,
+            kpi_breaches=0,
             mttr_minutes=0.0
         )
     
-    critical_count = sum(1 for a in alerts if a.get('severity') == 'critical')
-    sla_breaches = 0  # Calculate if needed
+    critical_count = sum(1 for a in alerts if a.get('priority') == 'critical')
+    kpi_breaches = 0  # Calculate if needed
     
     # Calculate MTTR for resolved alerts
     resolved_alerts = []
@@ -699,7 +919,7 @@ def create_metadata(alerts: Optional[List[Dict[str, Any]]] = None) -> ReportMeta
         generation_timestamp=now.isoformat(),
         alert_count=len(alerts),
         critical_alerts=critical_count,
-        sla_breaches=sla_breaches,
+        kpi_breaches=kpi_breaches,
         mttr_minutes=mttr
     )
 
@@ -866,7 +1086,7 @@ def run(shift_type: Optional[str] = None, shift_start: Optional[datetime] = None
     # First, build incident states for timing calculations
     incident_numbers_in_window = set(str(alert.get('incident_number')) for alert in alerts)
     all_alerts = _load_log_sync()
-    incident_states = build_incident_states(all_alerts, incident_numbers_in_window)
+    incident_states = build_alert_states(all_alerts, incident_numbers_in_window)
     
     # Create alert details with timing information
     alert_summary = create_alert_details_with_timing(alerts, incident_states)
@@ -887,7 +1107,7 @@ def run(shift_type: Optional[str] = None, shift_start: Optional[datetime] = None
     shift_kpis = calculate_shift_kpis(alerts, shift_start_arrow, shift_end_arrow)
     
     # Determine report status based on actual escalation count from escalation log
-    critical_count = sum(1 for alert in alerts if alert.get('severity', '').lower() == 'critical')
+    critical_count = sum(1 for alert in alerts if alert.get('priority', '').lower() == 'critical')
     escalated_count = len(escalated_alerts)
     
     if (critical_count >= ShiftConfig.CRITICAL_ALERT_THRESHOLD_RED or 
@@ -915,10 +1135,15 @@ def run(shift_type: Optional[str] = None, shift_start: Optional[datetime] = None
     active_incidents = [alert for alert in alert_summary if alert.status != 'resolved']
     resolved_incidents = [alert for alert in alert_summary if alert.status == 'resolved']
     
-    active_incidents_data = "\n".join([f"- {inc.title} (Severity: {inc.severity})" for inc in active_incidents]) or "No active incidents"
-    resolved_incidents_data = "\n".join([f"- {inc.title} (Severity: {inc.severity})" for inc in resolved_incidents]) or "No resolved incidents"
+    active_incidents_data = "\n".join([f"- {inc.title} (Priority: {inc.priority})" for inc in active_incidents]) or "No active incidents"
+    resolved_incidents_data = "\n".join([f"- {inc.title} (Priority: {inc.priority})" for inc in resolved_incidents]) or "No resolved incidents"
     
-    # Create task
+    p1_kpi_compliance_display = shift_kpis.get('priority_compliances', {}).get('P1', 'N/A')
+    p2_kpi_compliance_display = shift_kpis.get('priority_compliances', {}).get('P2', 'N/A')
+    p3_kpi_compliance_display = shift_kpis.get('priority_compliances', {}).get('P3', 'N/A')
+    p4_kpi_compliance_display = shift_kpis.get('priority_compliances', {}).get('P4', 'N/A')
+
+    # Create task with properly named variables
     report_task = Task(
         description=report_task_def["description"].format(
             shift_start=shift_start_local,
@@ -927,7 +1152,7 @@ def run(shift_type: Optional[str] = None, shift_start: Optional[datetime] = None
             total_alerts=len(alerts),
             unique_alerts=len(set(str(a.get('incident_number')) for a in alerts)),
             critical_alerts=critical_count,
-            warning_alerts=sum(1 for a in alerts if a.get('severity', '').lower() == 'warning'),
+            warning_alerts=sum(1 for a in alerts if a.get('priority', '').lower() == 'warning'),
             resolved_alerts=sum(1 for a in alerts if a.get('status', '').lower() == 'resolved'),
             acknowledged_alerts=sum(1 for a in alerts if a.get('status', '').lower() in ['acknowledged', 'resolved']),
             escalated_alerts=escalated_count,
@@ -943,11 +1168,20 @@ def run(shift_type: Optional[str] = None, shift_start: Optional[datetime] = None
             escalation_rate=f"{(escalated_count / len(alerts) * 100):.1f}%" if alerts else "0.0%",
             resolution_rate=f"{(sum(1 for a in alerts if a.get('status', '').lower() == 'resolved') / len(alerts) * 100):.1f}%" if alerts else "0.0%",
             acknowledgment_rate=f"{(sum(1 for a in alerts if a.get('status', '').lower() in ['acknowledged', 'resolved']) / len(alerts) * 100):.1f}%" if alerts else "0.0%",
-            sla_compliance=shift_kpis.get('sla_compliance_percentage', 'N/A'),
-            sla_breaches=shift_kpis.get('sla_breaches', 0),
-            severity_distribution=shift_kpis.get('severity_distribution', {}),
-            s2_sla_compliance=shift_kpis.get('sla_compliance_by_severity', {}).get('S2', 'N/A'),
-            s3_sla_compliance=shift_kpis.get('sla_compliance_by_severity', {}).get('S3', 'N/A')
+            kpi_compliance=shift_kpis.get('kpi_compliance_percentage', 'N/A'),
+            kpi_compliance_legacy=shift_kpis.get('kpi_compliance_percentage', 'N/A'),  # For backward compatibility
+            kpi_breaches=shift_kpis.get('kpi_breaches', 0),
+            kpi_breaches_legacy=shift_kpis.get('kpi_breaches', 0),  # For backward compatibility
+            priority_distribution=shift_kpis.get('priority_distribution', {}),
+            kpi_compliance_by_priority=shift_kpis.get('priority_compliances', {}),
+            avg_p1_kpi_compliance=shift_kpis.get('p1_compliance', 0.0),
+            avg_p2_kpi_compliance=shift_kpis.get('p2_compliance', 0.0),
+            avg_p3_kpi_compliance=shift_kpis.get('p3_compliance', 0.0),
+            avg_p4_kpi_compliance=shift_kpis.get('p4_compliance', 0.0),
+            p1_kpi_compliance=p1_kpi_compliance_display,
+            p2_kpi_compliance=p2_kpi_compliance_display,
+            p3_kpi_compliance=p3_kpi_compliance_display,
+            p4_kpi_compliance=p4_kpi_compliance_display
         ),
         expected_output=report_task_def["expected_output"],
         agent=reporter_agent,
@@ -1088,10 +1322,13 @@ if __name__ == "__main__":
             for alert in alerts[:5]:  # Show first 5
                 try:
                     ts = parse_ts_utc(alert.get('timestamp'))
-                    print(f"  Incident {alert.get('incident_number')}: {alert.get('title')[:50]}")
-                    print(f"    Time: {to_local_str(ts)} (Status: {alert.get('status')})")
+                    title = alert.get('title', 'No title')[:50] if alert.get('title') else 'No title'
+                    incident_num = alert.get('incident_number', 'Unknown')
+                    status = alert.get('status', 'Unknown')
+                    print(f"  Incident {incident_num}: {title}")
+                    print(f"    Time: {to_local_str(ts)} (Status: {status})")
                 except:
-                    print(f"  Incident {alert.get('incident_number')}: Invalid timestamp")
+                    print(f"  Incident {alert.get('incident_number', 'Unknown')}: Invalid timestamp")
             if len(alerts) > 5:
                 print(f"  ... and {len(alerts) - 5} more")
         else:
@@ -1113,10 +1350,13 @@ if __name__ == "__main__":
             for alert in alerts[:5]:
                 try:
                     ts = parse_ts_utc(alert.get('timestamp'))
-                    print(f"  Incident {alert.get('incident_number')}: {alert.get('title')[:50]}")
-                    print(f"    Time: {to_local_str(ts)} (Status: {alert.get('status')})")
+                    title = alert.get('title', 'No title')[:50] if alert.get('title') else 'No title'
+                    incident_num = alert.get('incident_number', 'Unknown')
+                    status = alert.get('status', 'Unknown')
+                    print(f"  Incident {incident_num}: {title}")
+                    print(f"    Time: {to_local_str(ts)} (Status: {status})")
                 except:
-                    print(f"  Incident {alert.get('incident_number')}: Invalid timestamp")
+                    print(f"  Incident {alert.get('incident_number', 'Unknown')}: Invalid timestamp")
             if len(alerts) > 5:
                 print(f"  ... and {len(alerts) - 5} more")
         else:
